@@ -19,7 +19,7 @@ Port nativo de **Super Mario Galaxy** para la **Anbernic RG35XX H** (Linux aarch
 
 | Hito | Estado |
 | --- | --- |
-| A. Base Linux reproducible | **hecho en PC x86-64**: dependencias fijadas, parches verificados por contenido (`fetch_deps.py --verify`), 67/67 pruebas de MacioGalaxy en serie. aarch64: scripts, toolchain y contenedor revisados; **sin compilar aquí** (no hay sysroot arm64 ni red) |
+| A. Base Linux reproducible | **hecho en PC x86-64**: dependencias fijadas, parches verificados por contenido (`fetch_deps.py --verify`), 66/66 pruebas de MacioGalaxy en serie. aarch64: scripts, toolchain y contenedor revisados; **sin compilar aquí** (no hay sysroot arm64 ni red) |
 | B. Modelo real con Choya (GX) | app completa enlaza; con `CHOYA_GLES=1` Aurora graba (backend nulo, sin superficie) y el host de Choya crea el contexto, dibuja y presenta. Probado con la API GX real y datos sintéticos (pbuffer sin servidor gráfico y SDL/X11); sin disco |
 | C. Arranque e interacción | pendiente de un disco (la app llega hasta pedirlo) |
 | D. Escena jugable | pendiente |
@@ -72,7 +72,7 @@ Requisitos: git, python3, cmake ≥ 3.25, ninja, clang 18 (o 16+), Mesa con EGL/
 git clone https://github.com/leonelavelarv-debug/galaxy-choya-native.git && cd galaxy-choya-native
 python3 scripts/fetch_deps.py                 # commits fijados + parches (falla si no encajan)
 sh scripts/build.sh host                      # bibliotecas y pruebas: libc++ estática, MacioGalaxy, Choya, ruta directa
-ctest --test-dir build/host/macio -j1         # 67 pruebas (las de tiempos fallan si se corren en paralelo en 2 núcleos)
+ctest --test-dir build/host/macio -j1         # 66 pruebas (las de tiempos fallan si se corren en paralelo en 2 núcleos)
 ctest --test-dir build/host/choya
 
 GALAXY_GX=ON sh scripts/build.sh host         # + Aurora, puente y host de pantalla (Dawn de referencia para la PC)

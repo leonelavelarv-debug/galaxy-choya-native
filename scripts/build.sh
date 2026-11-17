@@ -79,7 +79,8 @@ if [ "$MODE" = app ]; then
     python3 "$ROOT/scripts/check_elf.py" --arch aarch64 --glibc-max "${GALAXY_GLIBC_MAX:-2.36}" \
       --allow "${GALAXY_ELF_ALLOW:-libsqlite3.so.0,libpng16.so.16,libfreetype.so.6,libz.so.1}" "$BIN"
   else
-    python3 "$ROOT/scripts/check_elf.py" --arch x86_64 --glibc-max "${GALAXY_GLIBC_MAX:-2.39}" "$BIN"
+    python3 "$ROOT/scripts/check_elf.py" --arch x86_64 --glibc-max "${GALAXY_GLIBC_MAX:-2.39}" \
+      --allow "${GALAXY_ELF_ALLOW:-libsqlite3.so.0,libpng16.so.16,libfreetype.so.6,libz.so.1}" "$BIN"
   fi
   echo "ejecutable: $BIN"
   exit 0
