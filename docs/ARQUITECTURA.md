@@ -58,6 +58,24 @@ convertidas al formato del núcleo. Los desplazamientos que necesita el sombread
 misma secuencia que `fill_uniform`. El puente no inventa éxito: lo que no traduce se cuenta en `stats()` y se
 registra.
 
+## Host de pantalla (hilo GLES)
+
+```
+hilo del juego ──GX──► FIFO ──► Aurora (backend nulo: graba FramePacket, sin superficie WebGPU)
+                                   │ end_frame / token (capture_segment)
+                                   ▼
+                          puente: capture_* ──► cola acotada del núcleo (capture_end espera si va 6 grupos atrás)
+                                   │ notify / set_wake
+                                   ▼
+hilo choya-pantalla (único dueño del contexto GLES): draw_frame → presentar → leer copias de los tokens → ready()
+```
+
+- El contexto lo crea el hilo de pantalla y nunca sale de él (`galaxy_choya_host.cpp`); los demás hilos solo encolan.
+- Orden: el núcleo dibuja los grupos en el orden capturado; un lote de token (sin mostrarse) nunca se salta.
+- Apagado: `leave`/`forceQuit` de MacioGalaxy paran el hilo (termina lo que dibuja, suelta contexto y superficie)
+  antes de `_Exit`. SIGTERM (Select+Start) llega como `SDL_EVENT_QUIT` → `AURORA_EXIT` → mismo camino.
+- Mando y audio siguen en SDL como en MacioGalaxy; en fbdev, SDL usa vídeo `offscreen` para no tomar la pantalla.
+
 ## Convivencia de los backends
 
 Regla actual: **un backend por escena**, elegido al cambiar de escena (`galaxy::renderer_for_scene`). Nunca se

@@ -56,6 +56,33 @@ Contadores: `cuadros=4 pases=12 dibujos_gx=20 indices_generados=4 copias_a_panta
 `omitidos(pipeline=0 uniformes=0 otros=0)`, 51 520 bytes de uniformes reempaquetados. **Es corrección en PC, no
 rendimiento**: no hay tiempos porque llvmpipe y el backend nulo de Dawn no dicen nada de la Mali-G31.
 
+## Host de pantalla, lecturas del EFB y assets.wlpk (2026-11-17, PC, Mesa llvmpipe)
+
+Todas con la API GX real → FIFO → Aurora (con los parches de MacioGalaxy) → puente → núcleo GLES, y el contexto creado
+por el **host** (no por la prueba). Corrección, no rendimiento: llvmpipe no dice nada de la Mali-G31.
+
+| Prueba | Configuración | Resultado |
+| --- | --- | --- |
+| `galaxy_host_gx_pbuffer` | `GALAXY_PRESENT=pbuffer`, SDL `offscreen` (sin servidor gráfico), Aurora sin superficie WebGPU | instantánea del token: rojo `ffff0000`, z `1fffff`; fondo `ff0000ff`, z `ffffff`; imagen presentada verde (`00ff00`); 4 de lógica / 4 dibujados / 4 presentados / 4 lecturas; parada limpia |
+| `galaxy_host_gx_sdl` | `GALAXY_PRESENT=sdl` sobre la ventana de Aurora (X11 bajo xvfb) | igual |
+| `galaxy_pack_gx` | `assets.wlpk` sintético (WLPK v1) | A `ff00ff` (paquete), B `00ffff` (paquete, con paleta), C `ffffff` (original); 2 aciertos (1 con paleta), 1 fallo, 512 bytes no enviados |
+| `galaxy_bridge_gx` | contexto propio (la prueba anterior) | sin cambios: todo píxel exacto |
+| las cuatro con `GALAXY_WEBGPU_NULO=ON` | sin Dawn (`build/host/macio-nulo`) | pasan igual |
+
+En una de seis repeticiones de `galaxy_host_gx_pbuffer` el núcleo saltó dos cuadros viejos (4 de lógica, 2 dibujados,
+2 presentados): es el salto de cuadros de Choya cuando el hilo de pantalla va atrasado, y por eso se cuentan aparte.
+
+`check_elf.py` sobre los binarios de la PC: con Dawn pide además `libstdc++.so.6`; con el nulo, solo `libsqlite3`,
+`libpng16`, `libfreetype`, `libz` fuera del sistema base (B13). GLIBC máxima 2.38 (Ubuntu 24.04 de esta máquina; el
+contenedor Debian 12 limita a 2.36).
+
+## Conversión J3D (fase 3)
+
+`galaxy_gx_display_list_test`: 36 comprobaciones, entre ellas F32 y S16 en orden nativo e indexados, directos big
+endian en la lista, rechazo de listas truncadas, formatos inválidos e índices fuera de rango (posición, color y UV).
+`galaxy_j3d_bridge`: un `J3DVertexData` real con arreglos nativos y `mNativeArrayBytes` da `(1, 2, 3)` exactos (antes
+`~4.6e-41`).
+
 ## Ruta directa (`galaxy_direct_mesa_test`)
 
 | Comprobación | Resultado |

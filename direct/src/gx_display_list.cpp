@@ -58,15 +58,29 @@ int element_bytes(int attr, const GxAttrSource& s) {
   return comp_bytes(s.compType) * components(attr, s.cnt);
 }
 
-float read_comp(const uint8_t* p, uint8_t compType, uint8_t frac) {
+uint16_t ne16(const uint8_t* p) {
+  uint16_t v;
+  std::memcpy(&v, p, 2);
+  return v;
+}
+uint32_t ne32(const uint8_t* p) {
+  uint32_t v;
+  std::memcpy(&v, p, 4);
+  return v;
+}
+uint16_t rd16(const uint8_t* p, bool native) { return native ? ne16(p) : be16(p); }
+uint32_t rd32(const uint8_t* p, bool native) { return native ? ne32(p) : be32(p); }
+
+// native: el componente está en el orden del host (arreglo convertido); si no, big endian (lista o disco).
+float read_comp(const uint8_t* p, uint8_t compType, uint8_t frac, bool native) {
   const float scale = 1.f / static_cast<float>(1u << frac);
   switch (compType) {
   case GX_U8: return static_cast<float>(p[0]) * scale;
   case GX_S8: return static_cast<float>(static_cast<int8_t>(p[0])) * scale;
-  case GX_U16: return static_cast<float>(be16(p)) * scale;
-  case GX_S16: return static_cast<float>(static_cast<int16_t>(be16(p))) * scale;
+  case GX_U16: return static_cast<float>(rd16(p, native)) * scale;
+  case GX_S16: return static_cast<float>(static_cast<int16_t>(rd16(p, native))) * scale;
   case GX_F32: {
-    const uint32_t u = be32(p);
+    const uint32_t u = rd32(p, native);
     float f;
     std::memcpy(&f, &u, 4);
     return f;
@@ -75,19 +89,32 @@ float read_comp(const uint8_t* p, uint8_t compType, uint8_t frac) {
   }
 }
 
-std::array<uint8_t, 4> read_color(const uint8_t* p, uint8_t compType) {
+// Formato válido para el atributo (lo que el hardware acepta); lo demás se rechaza en vez de leer basura.
+bool valid_format(int attr, const GxAttrSource& s) {
+  if (attr == GX_VA_POS) return (s.cnt == GX_POS_XY || s.cnt == GX_POS_XYZ) && s.compType <= GX_F32;
+  if (attr == GX_VA_NRM) {
+    return s.cnt == GX_NRM_XYZ && (s.compType == GX_S8 || s.compType == GX_S16 || s.compType == GX_F32);
+  }
+  if (attr == GX_VA_CLR0 || attr == GX_VA_CLR1) {
+    return (s.cnt == GX_CLR_RGB || s.cnt == GX_CLR_RGBA) && s.compType <= GX_RGBA8;
+  }
+  if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) return (s.cnt == GX_TEX_S || s.cnt == GX_TEX_ST) && s.compType <= GX_F32;
+  return true;  // índices de matriz: un byte
+}
+
+std::array<uint8_t, 4> read_color(const uint8_t* p, uint8_t compType, bool native) {
   auto x5 = [](uint32_t v) { return static_cast<uint8_t>((v << 3) | (v >> 2)); };
   auto x6 = [](uint32_t v) { return static_cast<uint8_t>((v << 2) | (v >> 4)); };
   auto x4 = [](uint32_t v) { return static_cast<uint8_t>((v << 4) | v); };
   switch (compType) {
   case GX_RGB565: {
-    const uint32_t v = be16(p);
+    const uint32_t v = rd16(p, native);
     return {x5((v >> 11) & 31), x6((v >> 5) & 63), x5(v & 31), 255};
   }
   case GX_RGB8: return {p[0], p[1], p[2], 255};
   case GX_RGBX8: return {p[0], p[1], p[2], 255};
   case GX_RGBA4: {
-    const uint32_t v = be16(p);
+    const uint32_t v = rd16(p, native);
     return {x4((v >> 12) & 15), x4((v >> 8) & 15), x4((v >> 4) & 15), x4(v & 15)};
   }
   case GX_RGBA6: {
@@ -111,15 +138,26 @@ bool convert_display_list(const GxVertexSpec& spec, const uint8_t* dl, size_t si
     if (spec.attr[a].type != GX_NONE) return fail("matrices de textura por vértice: pendiente (ruta GX)");
   }
   if (spec.attr[GX_VA_POS].type == GX_NONE) return fail("sin posición");
+  if (spec.attr[GX_VA_PNMTXIDX].type > GX_DIRECT) return fail("índice de matriz de posición indexado: no existe en GX");
   if (spec.attr[GX_VA_NRM].type != GX_NONE && spec.attr[GX_VA_NRM].cnt != GX_NRM_XYZ) {
     return fail("normales NBT: pendiente (ruta GX)");
   }
   for (int a = GX_VA_POS; a <= GX_VA_TEX7; ++a) {
     const auto& s = spec.attr[a];
     if (s.type == GX_NONE) continue;
-    if (element_bytes(a, s) == 0) return fail("formato de componente desconocido en el atributo " + std::to_string(a));
-    if ((s.type == GX_INDEX8 || s.type == GX_INDEX16) && s.array == nullptr) {
-      return fail("atributo indexado sin arreglo: " + std::to_string(a));
+    if (s.type > GX_INDEX16) return fail("tipo de entrada inválido en el atributo " + std::to_string(a));
+    if (!valid_format(a, s) || element_bytes(a, s) == 0) {
+      return fail("formato de componente inválido en el atributo " + std::to_string(a));
+    }
+    if (s.type == GX_INDEX8 || s.type == GX_INDEX16) {
+      if (s.array == nullptr) return fail("atributo indexado sin arreglo: " + std::to_string(a));
+      if (s.arrayBytes == 0) return fail("atributo indexado sin tamaño de arreglo: " + std::to_string(a));
+      if (s.stride < static_cast<uint32_t>(element_bytes(a, s))) {
+        return fail("paso del arreglo menor que un elemento en el atributo " + std::to_string(a));
+      }
+      if (s.order == ArrayOrder::Native && (a == GX_VA_CLR0 || a == GX_VA_CLR1) && s.compType == GX_RGBA6) {
+        return fail("color RGBA6 en un arreglo nativo: orden de 24 bits sin definir");
+      }
     }
   }
   out.hasNormal = spec.attr[GX_VA_NRM].type != GX_NONE;
@@ -174,38 +212,40 @@ bool convert_display_list(const GxVertexSpec& spec, const uint8_t* dl, size_t si
           const auto& s = spec.attr[a];
           if (s.type == GX_NONE) continue;
           const uint8_t* src = nullptr;
+          bool native = false;  // los datos directos están en la lista: siempre big endian
           if (s.type == GX_DIRECT) {
             src = dl + q;
             q += static_cast<size_t>(element_bytes(a, s));
           } else {
-            const uint32_t i = s.type == GX_INDEX8 ? dl[q] : be16(dl + q);
+            const uint32_t i = s.type == GX_INDEX8 ? dl[q] : be16(dl + q);  // el índice está en la lista
             q += s.type == GX_INDEX8 ? 1 : 2;
             const size_t off = static_cast<size_t>(i) * s.stride;
-            if (s.arrayBytes != 0 && off + static_cast<size_t>(element_bytes(a, s)) > s.arrayBytes) {
-              return fail("índice fuera del arreglo del atributo " + std::to_string(a));
+            if (off + static_cast<size_t>(element_bytes(a, s)) > s.arrayBytes) {
+              return fail("índice " + std::to_string(i) + " fuera del arreglo del atributo " + std::to_string(a));
             }
             src = s.array + off;
+            native = s.order == ArrayOrder::Native;
           }
           if (a == GX_VA_PNMTXIDX) {
             out.matrixIndices.push_back(src[0]);
           } else if (a == GX_VA_POS) {
             const int c = components(a, s.cnt);
             for (int k = 0; k < 3; ++k) {
-              out.positions.push_back(k < c ? read_comp(src + k * comp_bytes(s.compType), s.compType, s.frac) : 0.f);
+              out.positions.push_back(k < c ? read_comp(src + k * comp_bytes(s.compType), s.compType, s.frac, native) : 0.f);
             }
           } else if (a == GX_VA_NRM) {
             // GX: las normales enteras usan 6 (S8) o 14 (S16) bits fraccionarios, no los del formato.
             const uint8_t nfrac = s.compType == GX_S8 ? 6 : s.compType == GX_S16 ? 14 : 0;
-            for (int k = 0; k < 3; ++k) out.normals.push_back(read_comp(src + k * comp_bytes(s.compType), s.compType, nfrac));
+            for (int k = 0; k < 3; ++k) out.normals.push_back(read_comp(src + k * comp_bytes(s.compType), s.compType, nfrac, native));
           } else if (a == GX_VA_CLR0 || a == GX_VA_CLR1) {
-            const auto c = read_color(src, s.compType);
+            const auto c = read_color(src, s.compType, native);
             auto& dst = out.colors[a - GX_VA_CLR0];
             dst.insert(dst.end(), c.begin(), c.end());
           } else {
             const int t = a - GX_VA_TEX0;
             const int c = components(a, s.cnt);
             for (int k = 0; k < 2; ++k) {
-              out.uv[t].push_back(k < c ? read_comp(src + k * comp_bytes(s.compType), s.compType, s.frac) : 0.f);
+              out.uv[t].push_back(k < c ? read_comp(src + k * comp_bytes(s.compType), s.compType, s.frac, native) : 0.f);
             }
           }
         }

@@ -111,6 +111,16 @@ function(galaxy_add_direct_j3d)
         if(TARGET aurora_gx)
             target_link_libraries(galaxy_direct_j3d PRIVATE aurora::gx)
         endif()
+        if(BUILD_TESTING)
+            # J3DVertexData real (su constructor) con arreglos nativos y tamaños de mNativeArrayBytes.
+            add_executable(galaxy_j3d_bridge_test "${GALAXY_ROOT}/tests/j3d_bridge_test.cpp"
+                "${CMAKE_SOURCE_DIR}/src/JSystem/J3DGraphBase/J3DVertex.cpp")
+            target_link_libraries(galaxy_j3d_bridge_test PRIVATE galaxy_direct_j3d)
+            # Solo hace falta el constructor de J3DVertexData: el resto de J3DVertex.cpp (que usa j3dSys) se descarta.
+            target_compile_options(galaxy_j3d_bridge_test PRIVATE -ffunction-sections -fdata-sections)
+            target_link_options(galaxy_j3d_bridge_test PRIVATE -Wl,--gc-sections)
+            add_test(NAME galaxy_j3d_bridge COMMAND galaxy_j3d_bridge_test)
+        endif()
     endif()
 endfunction()
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL galaxy_add_direct_j3d)
@@ -118,7 +128,7 @@ cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL galaxy_add_direct_j3d)
 # El paquete precompilado de Dawn (solo referencia en la PC, AURORA_DAWN_PROVIDER=package) está compilado con
 # libstdc++. Su API es C (webgpu.h), así que convive con la libc++ del port: se añade libstdc++ al final de la línea de
 # enlace solo en la compilación de la PC con Aurora. En la consola no hay Dawn (docs/BLOQUEOS.md, B2).
-if(PETARI_BUILD_GX_PROBE AND NOT CMAKE_CROSSCOMPILING)
+if(PETARI_BUILD_GX_PROBE AND NOT CMAKE_CROSSCOMPILING AND NOT GALAXY_WEBGPU_NULO)
     # Ruta completa (con -stdlib=libc++ clang no busca en la carpeta de GCC). Compartida, no estática: la estática
     # duplica los símbolos de libsupc++ que ya da la libc++abi del port.
     execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -stdlib=libstdc++ -print-file-name=libstdc++.so
@@ -132,6 +142,17 @@ endif()
 # --- Puente Aurora única → motor GLES de Choya (choya_bridge/). Se aplica sobre las fuentes de Aurora tal como las
 # dejan los parches de MacioGalaxy (la última versión de cada archivo en aurora_gx), y añade el puente y el núcleo de
 # Choya al mismo objetivo. Solo actúa con la fase 1 (PETARI_BUILD_GX_PROBE=ON). Cada gancho es obligatorio.
+# WebGPU nulo de Choya en lugar de Dawn (consola: obligatorio; PC: para probarlo). Las cabeceras son las de la versión
+# de Dawn que fija Aurora 08122911, extraídas por scripts/fetch_deps.py (third_party/dawn-headers, hash en lock.json).
+option(GALAXY_WEBGPU_NULO "WebGPU nulo de Choya en vez de Dawn" OFF)
+set(GALAXY_DAWN_HEADERS "${GALAXY_ROOT}/third_party/dawn-headers/include" CACHE PATH "Cabeceras de Dawn fijadas")
+if(GALAXY_WEBGPU_NULO)
+    if(NOT EXISTS "${GALAXY_DAWN_HEADERS}/dawn/webgpu.h")
+        message(FATAL_ERROR "galaxy-choya-native: faltan ${GALAXY_DAWN_HEADERS} (python3 scripts/fetch_deps.py --dawn-headers)")
+    endif()
+    set(Dawn_DIR "${GALAXY_ROOT}/nulo/cmake" CACHE PATH "" FORCE)
+endif()
+
 option(GALAXY_CHOYA_BRIDGE "Puente de Aurora hacia el motor GLES de Choya (se activa en ejecución con CHOYA_GLES=1)" ON)
 function(galaxy_add_choya_bridge)
     if(NOT GALAXY_CHOYA_BRIDGE OR NOT TARGET aurora_gx)
@@ -144,13 +165,18 @@ function(galaxy_add_choya_bridge)
     if(NOT EXISTS "${_choya}/choya_gx_core.cpp")
         message(FATAL_ERROR "galaxy-choya-native: falta ${_choya}/choya_gx_core.cpp (python3 scripts/fetch_deps.py)")
     endif()
-    get_target_property(_sources aurora_gx SOURCES)
-    foreach(_pair "frame:lib/gfx/frame.cpp" "recording:lib/gfx/recording.cpp"
-            "command_processor:lib/gx/command_processor.cpp" "texture:lib/gfx/texture.cpp"
-            "framebuffer:lib/dolphin/gx/GXFrameBuffer.cpp")
+    # Fuentes finales (ya con los parches de MacioGalaxy) de aurora_gx y aurora_core. Las de aurora_core son las de la
+    # presentación sin superficie WebGPU cuando Choya presenta (gpu, aurora, window).
+    foreach(_pair "aurora_gx:frame:lib/gfx/frame.cpp" "aurora_gx:recording:lib/gfx/recording.cpp"
+            "aurora_gx:command_processor:lib/gx/command_processor.cpp" "aurora_gx:texture:lib/gfx/texture.cpp"
+            "aurora_gx:framebuffer:lib/dolphin/gx/GXFrameBuffer.cpp" "aurora_gx:gxtexture:lib/gx/texture.cpp"
+            "aurora_core:gpu:lib/webgpu/gpu.cpp"
+            "aurora_core:aurora:lib/aurora.cpp" "aurora_core:window:lib/window.cpp")
         string(REPLACE ":" ";" _pair "${_pair}")
-        list(GET _pair 0 _kind)
-        list(GET _pair 1 _rel)
+        list(GET _pair 0 _tgt)
+        list(GET _pair 1 _kind)
+        list(GET _pair 2 _rel)
+        get_target_property(_sources ${_tgt} SOURCES)
         set(_found "")
         foreach(_s IN LISTS _sources)
             if(_s STREQUAL "${_rel}" OR _s MATCHES "/${_rel}$")
@@ -172,7 +198,7 @@ function(galaxy_add_choya_bridge)
             if(_nc EQUAL 1)
                 set(_found "${_cands}")
             else()
-                message(FATAL_ERROR "galaxy-choya-native: no encontré ${_rel} en aurora_gx (${_nc} candidatos)")
+                message(FATAL_ERROR "galaxy-choya-native: no encontré ${_rel} en ${_tgt} (${_nc} candidatos)")
             endif()
         endif()
         set(_input "${_found}")
@@ -184,7 +210,7 @@ function(galaxy_add_choya_bridge)
                         COMMAND_ERROR_IS_FATAL ANY)
         set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${_input}" "${_bridge}/patch_aurora_bridge.py")
-        get_source_file_property(_opts "${_found}" TARGET_DIRECTORY aurora_gx COMPILE_OPTIONS)
+        get_source_file_property(_opts "${_found}" TARGET_DIRECTORY ${_tgt} COMPILE_OPTIONS)
         if(NOT _opts)
             set(_opts "")
         endif()
@@ -192,22 +218,50 @@ function(galaxy_add_choya_bridge)
         list(APPEND _opts "-iquote${_orig_dir}" "-iquote${_aurora_dir}/lib")
         list(REMOVE_ITEM _sources "${_found}")
         list(APPEND _sources "${_output}")
-        set_source_files_properties("${_output}" TARGET_DIRECTORY aurora_gx PROPERTIES COMPILE_OPTIONS "${_opts}")
+        set_property(TARGET ${_tgt} PROPERTY SOURCES "${_sources}")
+        set_source_files_properties("${_output}" TARGET_DIRECTORY ${_tgt} PROPERTIES COMPILE_OPTIONS "${_opts}")
         message(STATUS "galaxy-choya-native: puente Choya en ${_rel}")
     endforeach()
-    list(APPEND _sources "${_bridge}/galaxy_choya_bridge.cpp" "${_choya}/choya_gx_core.cpp")
+    target_include_directories(aurora_core PRIVATE "${_bridge}")
+    get_target_property(_sources aurora_gx SOURCES)
+    list(APPEND _sources "${_bridge}/galaxy_choya_bridge.cpp" "${_bridge}/galaxy_choya_host.cpp"
+         "${_bridge}/galaxy_scene_renderer.cpp" "${GALAXY_ROOT}/direct/src/renderer_select.cpp"
+         "${_choya}/choya_gx_core.cpp")
     set_property(TARGET aurora_gx PROPERTY SOURCES "${_sources}")
-    set_source_files_properties("${_bridge}/galaxy_choya_bridge.cpp" TARGET_DIRECTORY aurora_gx PROPERTIES
-                                COMPILE_OPTIONS "-iquote${_aurora_dir}/lib")
-    target_include_directories(aurora_gx PRIVATE "${_bridge}" "${_choya}")
+    set_source_files_properties("${_bridge}/galaxy_choya_bridge.cpp" "${_bridge}/galaxy_choya_host.cpp"
+                                TARGET_DIRECTORY aurora_gx PROPERTIES COMPILE_OPTIONS "-iquote${_aurora_dir}/lib")
+    target_include_directories(aurora_gx PRIVATE "${_bridge}" "${_choya}" "${GALAXY_ROOT}/direct/include")
     target_link_libraries(aurora_gx PRIVATE dl)
     # Prueba de extremo a extremo: GX real → Aurora (backend nulo) → puente → núcleo en Mesa.
     add_executable(galaxy_bridge_gx_test EXCLUDE_FROM_ALL "${GALAXY_ROOT}/tests/bridge_gx_test.cpp")
     target_compile_features(galaxy_bridge_gx_test PRIVATE cxx_std_20)
     target_include_directories(galaxy_bridge_gx_test PRIVATE "${_bridge}" "${_choya}")
     target_link_libraries(galaxy_bridge_gx_test PRIVATE aurora::core aurora::gx aurora::vi petari_memory dl)
+    # Integración del host de pantalla: el contexto lo crea el host (como en la app), no la prueba.
+    add_executable(galaxy_host_gx_test EXCLUDE_FROM_ALL "${GALAXY_ROOT}/tests/host_gx_test.cpp")
+    target_compile_features(galaxy_host_gx_test PRIVATE cxx_std_20)
+    target_include_directories(galaxy_host_gx_test PRIVATE "${_bridge}" "${_choya}")
+    target_link_libraries(galaxy_host_gx_test PRIVATE petari_platform_vi aurora::core aurora::gx aurora::vi petari_memory dl)
+    # pbuffer con SDL "offscreen": sin servidor gráfico ni superficie WebGPU (como en la consola). 2 = omitida.
+    add_test(NAME galaxy_host_gx_pbuffer COMMAND galaxy_host_gx_test pbuffer)
+    set_tests_properties(galaxy_host_gx_pbuffer PROPERTIES ENVIRONMENT "EGL_PLATFORM=surfaceless"
+                         SKIP_RETURN_CODE 2 PASS_REGULAR_EXPRESSION "PRUEBA HOST OK")
+    # assets.wlpk por la ruta de la app: un paquete sintético con el formato del conversor de Choya.
+    add_executable(galaxy_pack_gx_test EXCLUDE_FROM_ALL "${GALAXY_ROOT}/tests/pack_gx_test.cpp")
+    target_compile_features(galaxy_pack_gx_test PRIVATE cxx_std_20)
+    target_include_directories(galaxy_pack_gx_test PRIVATE "${_bridge}" "${_choya}")
+    target_link_libraries(galaxy_pack_gx_test PRIVATE petari_platform_vi aurora::core aurora::gx aurora::vi petari_memory dl)
+    add_test(NAME galaxy_pack_gx COMMAND galaxy_pack_gx_test)
+    set_tests_properties(galaxy_pack_gx PROPERTIES ENVIRONMENT "EGL_PLATFORM=surfaceless"
+                         SKIP_RETURN_CODE 2 PASS_REGULAR_EXPRESSION "PRUEBA PAQUETE OK")
     # Aurora necesita una ventana SDL aunque use el backend nulo de Dawn: en PC sin pantalla se usa xvfb-run.
     find_program(GALAXY_XVFB_RUN xvfb-run)
+    if(GALAXY_XVFB_RUN)
+      # sdl: contexto GLES de SDL sobre la ventana de Aurora (SDL_WINDOW_OPENGL), en X11 bajo xvfb.
+      add_test(NAME galaxy_host_gx_sdl COMMAND ${GALAXY_XVFB_RUN} -a $<TARGET_FILE:galaxy_host_gx_test> sdl)
+      set_tests_properties(galaxy_host_gx_sdl PROPERTIES ENVIRONMENT "SDL_VIDEO_DRIVER=x11"
+                           SKIP_RETURN_CODE 2 PASS_REGULAR_EXPRESSION "PRUEBA HOST OK")
+    endif()
     if(GALAXY_XVFB_RUN)
       add_test(NAME galaxy_bridge_gx COMMAND ${GALAXY_XVFB_RUN} -a $<TARGET_FILE:galaxy_bridge_gx_test>)
     else()

@@ -1,0 +1,142 @@
+diff --git a/native/app/app_main.cpp b/native/app/app_main.cpp
+index e009f03..613f411 100644
+--- a/native/app/app_main.cpp
++++ b/native/app/app_main.cpp
+@@ -68,7 +68,26 @@ extern "C" void petari_gx_pipeline_set_gameplay(bool gameplay);
+ 
+ namespace App = PetariNative::App;
+ 
++#if !defined(__APPLE__)
++// galaxy-choya-native: enlace débil con el puente (existe cuando aurora_gx lo compila).
++extern "C" bool galaxy_choya_presents() __attribute__((weak));
++extern "C" bool galaxy_choya_host_start(void* sdlWindow) __attribute__((weak));
++#endif
++
+ namespace {
++#if !defined(__APPLE__)
++AuroraBackend petariLinuxBackend() {
++    if (galaxy_choya_presents != nullptr && galaxy_choya_presents()) return BACKEND_NULL;
++    const char* wanted = std::getenv("PETARI_GFX_BACKEND");
++    if (wanted == nullptr || wanted[0] == '\0' || std::strcmp(wanted, "auto") == 0) return BACKEND_AUTO;
++    if (std::strcmp(wanted, "vulkan") == 0) return BACKEND_VULKAN;
++    if (std::strcmp(wanted, "opengl") == 0) return BACKEND_OPENGL;
++    if (std::strcmp(wanted, "opengles") == 0) return BACKEND_OPENGLES;
++    if (std::strcmp(wanted, "null") == 0) return BACKEND_NULL;
++    std::fprintf(stderr, "petari: unknown PETARI_GFX_BACKEND=%s; using auto\n", wanted);
++    return BACKEND_AUTO;
++}
++#endif
+ 
+ // A game never restores its windows. Without this, after Petari crashed (a test sweep crashes it on
+ // purpose) macOS asks "reopen windows?" in a modal alert at the next launch, which blocks the game
+@@ -966,7 +985,13 @@ int main(int argc, char** argv) {
+     const std::string cachePath = App::SmokeBackground::enabled ? smokeStorage.cache.string()
+                                                                 : pipelineCache.path.string();
+     config.cachePath = cachePath.c_str();
++#if defined(__APPLE__)
+     config.desiredBackend = BACKEND_METAL;
++#else
++    // galaxy-choya-native (Linux): con CHOYA_GLES=1 presenta el motor GLES de Choya y Aurora usa el backend nulo de
++    // WebGPU (solo graba los cuadros); sin él, Dawn de referencia en la PC (PETARI_GFX_BACKEND=vulkan|opengl|auto).
++    config.desiredBackend = petariLinuxBackend();
++#endif
+     // The game paces itself on VI retraces; a blocking present would add a
+     // second wait per frame.
+     config.vsync = false;
+@@ -978,11 +1003,31 @@ int main(int argc, char** argv) {
+     config.logCallback = logMessage;
+     config.logLevel = LOG_INFO;
+     const AuroraInfo info = aurora_initialize(1, argv, &config);
++#if defined(__APPLE__)
+     if (info.window == nullptr || aurora_get_backend() != BACKEND_METAL) {
+         std::fputs("petari: Metal initialization failed\n", stderr);
+         aurora_shutdown();
+         return 1;
+     }
++#else
++    if (info.window == nullptr ||
++        (config.desiredBackend != BACKEND_AUTO && aurora_get_backend() != config.desiredBackend)) {
++        std::fprintf(stderr, "petari: graphics backend %d unavailable (got %d)\n", int(config.desiredBackend),
++                     int(aurora_get_backend()));
++        aurora_shutdown();
++        return 1;
++    }
++    std::fprintf(stderr, "petari: graphics backend %d%s\n", int(aurora_get_backend()),
++                 galaxy_choya_presents != nullptr && galaxy_choya_presents() ? " (Aurora records; Choya presents)" : "");
++    if (galaxy_choya_presents != nullptr && galaxy_choya_presents()) {
++        // El hilo de pantalla crea el contexto GLES; sin él no hay salida gráfica: se sale con error, no se simula.
++        if (galaxy_choya_host_start == nullptr || !galaxy_choya_host_start(info.window)) {
++            std::fputs("petari: Choya display could not start (see [choya-pantalla] lines)\n", stderr);
++            aurora_shutdown();
++            return 1;
++        }
++    }
++#endif
+     if (App::SmokeBackground::enabled) {
+         auto* window = static_cast<SDL_Window*>(info.window);
+         if (!SDL_SetWindowFocusable(window, false)) {
+diff --git a/native/app/platform_host.cpp b/native/app/platform_host.cpp
+index ee191a2..6466803 100644
+--- a/native/app/platform_host.cpp
++++ b/native/app/platform_host.cpp
+@@ -35,12 +35,20 @@ namespace Platform = PetariNative::Platform;
+ 
+ namespace {
+ 
++// galaxy-choya-native: el hilo de pantalla de Choya suelta el contexto GLES y la superficie (fbdev/KMS) antes de
++// _Exit, para que el lanzador recupere la pantalla.
++extern "C" void galaxy_choya_host_stop() __attribute__((weak));
++void stopChoyaDisplay() {
++    if (galaxy_choya_host_stop != nullptr) galaxy_choya_host_stop();
++}
++
+ // The OS exit functions (OSShutdownSystem, OSReturnToMenu, OSRestart, ...)
+ // end here after the game's shutdown functions ran, on the game thread that
+ // called them. NAND data is durable once NANDClose/NANDSafeClose returned, so
+ // nothing needs flushing but stdio; process exit releases the audio device and
+ // the window, so no platform shutdowns (which join their threads) run here.
+ void leave(const Platform::Power::Exit& exit, void*) {
++    stopChoyaDisplay();
+     Seam::reportFrameStats();
+     petari_platform_report_diagnostics();
+     std::fflush(stdout);
+@@ -148,6 +156,7 @@ void requestQuit() {
+ }
+ 
+ void forceQuit() {
++    stopChoyaDisplay();
+     Seam::reportFrameStats();
+     petari_platform_report_diagnostics();
+     std::fputs("Petari: quitting immediately\n", stderr);
+diff --git a/native/gx/efb_snapshot.cpp b/native/gx/efb_snapshot.cpp
+index 459d65d..6557fed 100644
+--- a/native/gx/efb_snapshot.cpp
++++ b/native/gx/efb_snapshot.cpp
+@@ -339,16 +339,26 @@ bool snapshotStats(std::uint64_t ticket, SnapshotStats& result) {
+ }
+ }
+ 
++// galaxy-choya-native: con el motor de Choya las instantáneas las lee el núcleo GLES (galaxy_choya_bridge.cpp); el
++// backend nulo de WebGPU no tiene píxeles reales.
++extern "C" bool galaxy_choya_presents() __attribute__((weak));
++extern "C" bool galaxy_choya_read_snapshot(std::uint64_t, std::uint16_t, std::uint16_t, std::uint32_t*,
++                                           std::uint32_t*) __attribute__((weak));
++extern "C" void galaxy_choya_retire_snapshots(std::uint64_t) __attribute__((weak));
++static bool choyaSnapshots() { return galaxy_choya_presents != nullptr && galaxy_choya_presents(); }
++
+ extern "C" void petari_gx_install_snapshots() {
+     petari_gx_sync_set_snapshot_hook([](std::uint64_t ticket, std::uint16_t,
+                                        std::uint64_t, void*) {
+-        PetariNative::GX::retireSnapshots(petari_gx_sync_delivered_ticket());
++        if (choyaSnapshots()) galaxy_choya_retire_snapshots(petari_gx_sync_delivered_ticket());
++        else PetariNative::GX::retireSnapshots(petari_gx_sync_delivered_ticket());
+         PetariNative::GX::captureEfb(ticket, petari_gx_sync_snapshot_ready);
+     }, nullptr);
+ }
+ 
+ extern "C" bool petari_gx_read_snapshot(std::uint64_t ticket, std::uint16_t x,
+     std::uint16_t y, std::uint32_t* depth, std::uint32_t* argb) {
++    if (choyaSnapshots()) return galaxy_choya_read_snapshot(ticket, x, y, depth, argb);
+     return PetariNative::GX::readSnapshot(ticket, x, y, *depth, *argb);
+ }
+ 

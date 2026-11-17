@@ -55,6 +55,8 @@ def main() -> int:
     ap.add_argument("--binary", required=True)
     ap.add_argument("--out", default=os.path.join(ROOT, "out", "portmaster"))
     ap.add_argument("--pack", help="assets.wlpk convertido por Choya (opcional)")
+    ap.add_argument("--libs", help="carpeta con las bibliotecas extra que pide el ejecutable (libs.aarch64/: las que "
+                                   "check_elf.py marcó con --allow, tomadas del sysroot Debian 12 arm64)")
     ap.add_argument("--allow-host", action="store_true", help="aceptar un binario de PC (solo para revisar)")
     a = ap.parse_args()
 
@@ -84,6 +86,12 @@ def main() -> int:
         f.write("gx\n")
     exe = os.path.join(port, "galaxy-choya")
     shutil.copy2(a.binary, exe)
+    if a.libs:
+        dst = os.path.join(port, "libs.aarch64")
+        os.makedirs(dst, exist_ok=True)
+        for name in sorted(os.listdir(a.libs)):
+            if ".so" in name:
+                shutil.copy2(os.path.join(a.libs, name), os.path.join(dst, name), follow_symlinks=True)
     os.chmod(exe, 0o755)
     if a.pack:
         shutil.copy2(a.pack, os.path.join(port, "assets.wlpk"))

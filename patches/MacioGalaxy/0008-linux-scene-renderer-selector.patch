@@ -1,0 +1,22 @@
+diff --git a/src/Game/System/GameSystemSceneController.cpp b/src/Game/System/GameSystemSceneController.cpp
+index f66cb7b..f8340ff 100644
+--- a/src/Game/System/GameSystemSceneController.cpp
++++ b/src/Game/System/GameSystemSceneController.cpp
+@@ -71,8 +71,17 @@ void SceneControlInfo::setScene(const char* pSceneName) {
+     snprintf(mScene, sizeof(mScene), "%s", pSceneName);
+ }
+ 
++#ifdef PETARI_NATIVE
++// galaxy-choya-native: el selector de backend por escena (GALAXY_RENDERER) se aplica al elegir la etapa; registra
++// el backend efectivo. Enlace débil: solo existe con el puente de Choya compilado.
++extern "C" void galaxy_scene_renderer(const char* stageName) __attribute__((weak));
++#endif
++
+ void SceneControlInfo::setStage(const char* pStageName) {
+     snprintf(mStage, sizeof(mStage), "%s", pStageName);
++#ifdef PETARI_NATIVE
++    if (galaxy_scene_renderer != nullptr) galaxy_scene_renderer(mStage);
++#endif
+ }
+ 
+ void SceneControlInfo::setStartIdInfo(const JMapIdInfo& rInfo) {

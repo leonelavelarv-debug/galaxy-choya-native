@@ -1,6 +1,7 @@
 // galaxy-choya-native: puente Aurora única → motor GLES de Choya. Ver galaxy_choya_bridge.hpp.
 // Se compila dentro del objetivo aurora_gx (con las rutas internas de Aurora: -iquote <aurora>/lib).
 #include "galaxy_choya_bridge.hpp"
+#include "galaxy_choya_host.hpp"
 
 #include "gfx/clear.hpp"
 #include "gfx/frame_packet.hpp"
@@ -18,6 +19,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <map>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -66,6 +69,26 @@ std::atomic<bool> gUsed{false};
 // Búferes del cuadro (se reutilizan).
 std::vector<uint8_t> gUniforms;
 std::vector<uint8_t> gIndices;
+
+// Operaciones del FramePacket ya entregadas al núcleo en un segmento (lectura del EFB) del cuadro en curso.
+uint64_t gCursorFrame = UINT64_MAX;
+size_t gCursorOp = 0;
+
+// Lecturas del EFB pedidas y servidas. Ids de copia propios del puente (bit 62; las texturas de Aurora son punteros
+// y la ruta directa usa el bit 63).
+constexpr uint64_t kSnapIdBase = uint64_t{1} << 62;
+struct Readback {
+  uint64_t ticket;
+  SnapshotReady ready;
+  uint32_t width, height;
+};
+struct Snapshot {
+  uint32_t width = 0, height = 0;
+  std::vector<uint32_t> depth, argb;
+};
+std::mutex gSnapMutex;
+std::deque<Readback> gPendingReadbacks;
+std::map<uint64_t, Snapshot> gSnapshots;
 
 void log_line(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void log_line(const char* fmt, ...) {
@@ -423,9 +446,40 @@ void register_bind_group(uint64_t ref, const gx::ShaderInfo& info) noexcept {
   core::register_bind_group(ref, d);
 }
 
+namespace {
+thread_local const PackSource* tPackSource = nullptr;
+}
+
+PackScope::PackScope(const PackSource& src) noexcept : source_(src) { tPackSource = &source_; }
+PackScope::~PackScope() noexcept { tPackSource = nullptr; }
+
 void texture_data(const gfx::TextureRef& ref, const uint8_t* data, size_t size) noexcept {
   if (!enabled() || data == nullptr) return;
-  send_texture(reinterpret_cast<uintptr_t>(&ref), ref, data, size);
+  const auto id = reinterpret_cast<uintptr_t>(&ref);
+  if (const PackSource* src = tPackSource; src != nullptr && core::pack_is_open()) {
+    tPackSource = nullptr;  // una sola textura por alcance
+    const int64_t index = src->tlut != nullptr
+                              ? core::pack_lookup_palette(src->gxFormat, src->width, src->height, src->data, src->size,
+                                                          src->tlut, src->tlutBytes, src->tlutFormat)
+                              : core::pack_lookup(src->gxFormat, src->width, src->height, src->data, src->size);
+    if (index >= 0 && core::texture_from_pack(id, index)) {
+      ++gStats.packHits;
+      if (src->tlut != nullptr) ++gStats.packPaletteHits;
+      gStats.packBytesReplaced += size;
+      return;  // el núcleo sube la del paquete; la decodificada por Aurora no se manda
+    }
+    ++gStats.packMisses;  // sin sustitución válida: la original
+    if (std::getenv("GALAXY_BRIDGE_DEBUG")) {
+      const size_t need = core::gx_level_size(src->gxFormat, src->width, src->height);
+      log_line("paquete: sin entrada para fmt %u %ux%u (%zu bytes, nivel 0 %zu, clave sin paleta %016llx%s)",
+               src->gxFormat, src->width, src->height, src->size, need,
+               static_cast<unsigned long long>(
+                   need != 0 && src->size >= need ? core::texture_key(src->data, need, src->width, src->height, src->gxFormat)
+                                                  : 0),
+               src->tlut != nullptr ? ", con paleta" : "");
+    }
+  }
+  send_texture(id, ref, data, size);
 }
 
 std::shared_ptr<gfx::TextureRef> tracked(std::shared_ptr<gfx::TextureRef> handle) noexcept {
@@ -454,8 +508,11 @@ void note_copy(const void* dest, const gfx::TextureRef* texture) noexcept {
   if (gPendingDisplayDests.erase(dest) != 0) gDisplayTextures.insert(reinterpret_cast<uintptr_t>(texture));
 }
 
-void capture_packet(gfx::detail::FramePacket& packet) noexcept {
-  if (!enabled()) return;
+namespace {
+// Entrega al núcleo las operaciones del paquete desde la primera no entregada. present: el cuadro se muestra.
+// snap: copias de lectura al final (segmento a la hora de un token).
+void capture_ops(gfx::detail::FramePacket& packet, bool present, const Readback* snap,
+                 const SnapshotArea* area) noexcept {
   using namespace gfx::detail;
   gUsed.store(true, std::memory_order_relaxed);
   std::unordered_set<uintptr_t> displayTex;
@@ -496,7 +553,13 @@ void capture_packet(gfx::detail::FramePacket& packet) noexcept {
   std::vector<Item> items;
   items.reserve(4096);
 
-  for (const FrameOp& op : packet.ops) {
+  if (gCursorFrame != packet.frameId) {
+    gCursorFrame = packet.frameId;
+    gCursorOp = 0;
+  }
+  const size_t firstOp = std::min(gCursorOp, packet.ops.size());
+  for (size_t opIndex = firstOp; opIndex < packet.ops.size(); ++opIndex) {
+    const FrameOp& op = packet.ops[opIndex];
     if (op.type == FrameOpType::TextureCopy) {
       ++gStats.skippedTextureCopies;
       note_once("texcopy", "copia de textura a textura de Aurora (queue_texture_copy): el núcleo no la tiene");
@@ -685,8 +748,30 @@ void capture_packet(gfx::detail::FramePacket& packet) noexcept {
     } break;
     }
   }
-  core::capture_end(true);
   gStats.uniformBytes += gUniforms.size();
+  if (snap != nullptr) {
+    // Al terminar el último pase: profundidad (Z24X8 → bytes hi, mid, lo en RGB) y color RGBA8 del área lógica.
+    const core::Rect r{static_cast<int32_t>(std::lround(area->offsetX)), static_cast<int32_t>(std::lround(area->offsetY)),
+                       static_cast<int32_t>(std::lround(area->logicalWidth * area->scaleX)),
+                       static_cast<int32_t>(std::lround(area->logicalHeight * area->scaleY))};
+    core::capture_copy(kSnapIdBase | (snap->ticket << 1), r, snap->width, snap->height, 0x16 /*GX_TF_Z24X8*/, true);
+    core::capture_copy(kSnapIdBase | (snap->ticket << 1) | 1, r, snap->width, snap->height, 0x6 /*GX_TF_RGBA8*/,
+                       false);
+    core::capture_flush();  // cierra el lote (sin mostrarse) y lo entrega ya
+    gCursorOp = packet.ops.size();
+    ++gStats.segments;
+    return;
+  }
+  core::capture_end(present);
+  gCursorOp = 0;
+  gCursorFrame = UINT64_MAX;
+}
+} // namespace
+
+void capture_packet(gfx::detail::FramePacket& packet) noexcept {
+  if (!enabled()) return;
+  capture_ops(packet, true, nullptr, nullptr);
+  host::notify();
   ++gStats.frames;
   if (gStats.frames == 1 || gStats.frames % 600 == 0) {
     log_line("cuadro %llu: %llu dibujos GX, %llu borrados, %llu copias (%llu a pantalla), %llu paletas; omitidos: "
@@ -701,6 +786,88 @@ void capture_packet(gfx::detail::FramePacket& packet) noexcept {
   }
 }
 
+bool capture_segment(gfx::detail::FramePacket& packet, uint64_t ticket, SnapshotReady ready,
+                     const SnapshotArea& area) noexcept {
+  if (!enabled()) return false;
+  if (ready == nullptr || area.logicalWidth == 0 || area.logicalHeight == 0 || ticket >= (uint64_t{1} << 61)) {
+    log_line("lectura del EFB inválida (ticket %llu, %ux%u)", static_cast<unsigned long long>(ticket),
+             area.logicalWidth, area.logicalHeight);
+    std::abort();  // el juego esperaría para siempre un token sin instantánea
+  }
+  const Readback rb{ticket, ready, area.logicalWidth, area.logicalHeight};
+  {
+    std::lock_guard lock(gSnapMutex);
+    gPendingReadbacks.push_back(rb);
+  }
+  ++gStats.readbacksRequested;
+  capture_ops(packet, false, &rb, &area);
+  host::notify();
+  return true;
+}
+
+uint64_t serve_readbacks() noexcept {
+  uint64_t served = 0;
+  for (;;) {
+    Readback rb;
+    {
+      std::lock_guard lock(gSnapMutex);
+      if (gPendingReadbacks.empty()) break;
+      rb = gPendingReadbacks.front();
+    }
+    const uint64_t depthId = kSnapIdBase | (rb.ticket << 1), colorId = depthId | 1;
+    // Aún no dibujado (el lote sigue en cola): se sirve en la próxima vuelta del hilo de pantalla.
+    if (!core::has_copy_texture(depthId) || !core::has_copy_texture(colorId)) break;
+    std::vector<uint8_t> depthRgba, colorRgba;
+    uint32_t dw = 0, dh = 0, cw = 0, ch = 0;
+    Snapshot snap;
+    const bool ok = core::debug_read_copy(depthId, depthRgba, dw, dh) && core::debug_read_copy(colorId, colorRgba, cw, ch) &&
+                    dw == rb.width && dh == rb.height && cw == rb.width && ch == rb.height;
+    core::texture_released(depthId);
+    core::texture_released(colorId);
+    if (!ok) {
+      ++gStats.readbacksFailed;
+      log_line("lectura del EFB del ticket %llu: el núcleo no devolvió las copias (%ux%u y %ux%u, pedido %ux%u)",
+               static_cast<unsigned long long>(rb.ticket), dw, dh, cw, ch, rb.width, rb.height);
+      std::abort();  // sin datos reales no se entrega el token (la lógica del juego dependería de basura)
+    }
+    snap.width = rb.width;
+    snap.height = rb.height;
+    snap.depth.resize(size_t{rb.width} * rb.height);
+    snap.argb.resize(snap.depth.size());
+    // Fila 0 de la copia = fila de arriba del área (como las texturas del juego).
+    for (size_t i = 0; i < snap.depth.size(); ++i) {
+      const uint8_t* d = &depthRgba[i * 4];
+      const uint8_t* c = &colorRgba[i * 4];
+      snap.depth[i] = (uint32_t{d[0]} << 16) | (uint32_t{d[1]} << 8) | d[2];
+      snap.argb[i] = (uint32_t{c[3]} << 24) | (uint32_t{c[0]} << 16) | (uint32_t{c[1]} << 8) | c[2];
+    }
+    {
+      std::lock_guard lock(gSnapMutex);
+      gPendingReadbacks.pop_front();
+      gSnapshots[rb.ticket] = std::move(snap);
+    }
+    ++gStats.readbacksServed;
+    ++served;
+    rb.ready(rb.ticket);
+  }
+  return served;
+}
+
+bool read_snapshot(uint64_t ticket, uint16_t x, uint16_t y, uint32_t& depth, uint32_t& argb) noexcept {
+  std::lock_guard lock(gSnapMutex);
+  const auto it = gSnapshots.find(ticket);
+  if (it == gSnapshots.end() || x >= it->second.width || y >= it->second.height) return false;
+  const size_t i = size_t{y} * it->second.width + x;
+  depth = it->second.depth[i];
+  argb = it->second.argb[i];
+  return true;
+}
+
+void retire_snapshots(uint64_t throughTicket) noexcept {
+  std::lock_guard lock(gSnapMutex);
+  gSnapshots.erase(gSnapshots.begin(), gSnapshots.upper_bound(throughTicket));
+}
+
 Stats stats() noexcept { return gStats; }
 
 } // namespace galaxy_choya
@@ -709,3 +876,9 @@ extern "C" bool galaxy_choya_draw_frame(int screenWidth, int screenHeight) {
   if (!galaxy_choya::enabled()) return false;
   return ::choya::gx::draw_frame(screenWidth, screenHeight);
 }
+
+// Para efb_snapshot.cpp de MacioGalaxy (enlace débil; ver capture_segment).
+extern "C" bool galaxy_choya_read_snapshot(uint64_t ticket, uint16_t x, uint16_t y, uint32_t* depth, uint32_t* argb) {
+  return depth != nullptr && argb != nullptr && galaxy_choya::read_snapshot(ticket, x, y, *depth, *argb);
+}
+extern "C" void galaxy_choya_retire_snapshots(uint64_t throughTicket) { galaxy_choya::retire_snapshots(throughTicket); }

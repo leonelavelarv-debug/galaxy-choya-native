@@ -58,11 +58,28 @@ if [ -z "$GALAXY_RENDERER" ] && [ -f "$GAMEDIR/conf/renderer.txt" ]; then
 fi
 export GALAXY_RENDERER="${GALAXY_RENDERER:-gx}"
 export CHOYA_GLES=1
+# Pantalla: el host de Choya crea el contexto GLES en su hilo. Con DRM (muOS/KNULLI con Panfrost) SDL abre KMSDRM con
+# EGL/GBM; con el driver Mali de fbdev (sin /dev/dri) EGL va directo a /dev/fb0 y SDL queda sin vídeo propio (offscreen)
+# para no tomar la pantalla. Se puede forzar con conf/present.txt (sdl | fbdev).
+if [ -z "$GALAXY_PRESENT" ] && [ -f "$GAMEDIR/conf/present.txt" ]; then
+  GALAXY_PRESENT="$(head -n1 "$GAMEDIR/conf/present.txt" | tr -d '\r ')"
+fi
+if [ -z "$GALAXY_PRESENT" ]; then
+  if [ -e /dev/dri/card0 ] || [ -e /dev/dri/card1 ]; then GALAXY_PRESENT=sdl; else GALAXY_PRESENT=fbdev; fi
+fi
+export GALAXY_PRESENT
+if [ "$GALAXY_PRESENT" = fbdev ]; then
+  export SDL_VIDEO_DRIVER=offscreen
+else
+  export SDL_VIDEO_DRIVER="${SDL_VIDEO_DRIVER:-kmsdrm}"
+fi
 # Paquete de texturas convertidas por Choya (opcional): si falta, se usan las texturas originales del disco.
 if [ -f "$GAMEDIR/assets.wlpk" ]; then
   export CHOYA_PAQUETE="$GAMEDIR/assets.wlpk"
 fi
-echo "[galaxy-choya] backend=$GALAXY_RENDERER paquete=${CHOYA_PAQUETE:-ninguno}"
+echo "[galaxy-choya] backend=$GALAXY_RENDERER pantalla=$GALAXY_PRESENT vídeo SDL=$SDL_VIDEO_DRIVER paquete=${CHOYA_PAQUETE:-ninguno}"
+echo "[galaxy-choya] glibc: $(ldd --version 2>&1 | head -n1)"
+[ -e /dev/dri/card0 ] && echo "[galaxy-choya] /dev/dri/card0 presente" || echo "[galaxy-choya] sin /dev/dri (fbdev)"
 
 # Mando: gptokeyb solo para la salida limpia (Select+Start mata el proceso con SIGTERM, que el juego atiende).
 $GPTOKEYB "galaxy-choya" -c "$GAMEDIR/galaxy-choya.gptk" &
