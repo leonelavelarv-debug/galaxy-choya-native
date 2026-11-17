@@ -3,7 +3,7 @@
 
   patch_aurora_bridge.py <tipo> <entrada> <salida>
 
-Tipos: frame, recording, command_processor, texture, framebuffer. Cada inserción es obligatoria: si su texto de
+Tipos: frame, recording, command_processor, texture, framebuffer (aurora_gx); gpu, aurora, window (aurora_core). Cada inserción es obligatoria: si su texto de
 anclaje no aparece exactamente una vez, el script falla y la configuración se detiene (no se compila un puente a
 medias). Idempotente: si la salida ya lleva el gancho, se rehace desde la entrada igual.
 """
@@ -27,9 +27,81 @@ def add_include(text: str) -> str:
 
 
 def frame(t: str) -> str:
-    return replace_once(t, "  auto& frame = *recorded.packet;\n",
-                        "  auto& frame = *recorded.packet;\n  ::galaxy_choya::capture_packet(frame);\n",
-                        "end_frame: recorded.packet")
+    t = replace_once(t, "  auto& frame = *recorded.packet;\n",
+                     "  auto& frame = *recorded.packet;\n  ::galaxy_choya::capture_packet(frame);\n",
+                     "end_frame: recorded.packet")
+    # Con Choya, las lecturas del EFB las hace el núcleo (capture_segment): el backend nulo de WebGPU no se lee.
+    return replace_once(
+        t,
+        "      auto mapReadback = PetariNative::GX::encodeSnapshot(frame.encoder, source, ticket, ready);\n",
+        "      auto mapReadback = ::galaxy_choya::enabled()\n"
+        "                             ? AfterSubmitCallback{[] {}}\n"
+        "                             : PetariNative::GX::encodeSnapshot(frame.encoder, source, ticket, ready);\n",
+        "petari_submit_segment: encodeSnapshot")
+
+
+PRESENTS = ('extern "C" bool galaxy_choya_presents() __attribute__((weak));  // galaxy-choya-native\n'
+            'static bool galaxy_choya_presents_now() { return galaxy_choya_presents != nullptr && galaxy_choya_presents(); }\n')
+
+
+def gpu(t: str) -> str:
+    # Choya presenta: sin superficie WebGPU (el backend nulo no muestra nada y en la consola no hay X11/Wayland).
+    t = replace_once(t, "static bool create_surface() {\n",
+                     "static bool create_surface() {\n"
+                     "  if (galaxy_choya_presents_now()) {\n"
+                     "    window::SurfaceLock surfaceLock;\n"
+                     "    release_surface_locked();\n"
+                     "    Log.info(\"galaxy-choya-native: Choya presenta; sin superficie WebGPU\");\n"
+                     "    return true;\n"
+                     "  }\n",
+                     "create_surface")
+    t = replace_once(t,
+                     "  const wgpu::Status status = g_surface.GetCapabilities(g_adapter, &g_surfaceCapabilities);\n",
+                     "  const bool choyaNoSurface = !g_surface && galaxy_choya_presents_now();\n"
+                     "  const wgpu::Status status = choyaNoSurface\n"
+                     "                                  ? wgpu::Status::Success\n"
+                     "                                  : wgpu::Status(g_surface.GetCapabilities(g_adapter, &g_surfaceCapabilities));\n",
+                     "GetCapabilities")
+    t = replace_once(t, "  if (g_surfaceCapabilities.formatCount == 0) {\n    Log.error(\"Surface has no formats\");",
+                     "  if (!choyaNoSurface && g_surfaceCapabilities.formatCount == 0) {\n"
+                     "    Log.error(\"Surface has no formats\");",
+                     "Surface has no formats")
+    t = replace_once(t, "  if (g_surfaceCapabilities.presentModeCount == 0) {\n",
+                     "  if (!choyaNoSurface && g_surfaceCapabilities.presentModeCount == 0) {\n",
+                     "Surface has no present modes")
+    t = replace_once(t, "  auto surfaceFormat = best_surface_format();\n",
+                     "  auto surfaceFormat = choyaNoSurface ? wgpu::TextureFormat::RGBA8Unorm : best_surface_format();\n",
+                     "best_surface_format")
+    t = replace_once(t, "  if (!g_surface || !g_device || width == 0 || height == 0 || nativeHeight == 0 || nativeWidth == 0) {\n",
+                     "  if ((!g_surface && !galaxy_choya_presents_now()) || !g_device || width == 0 || height == 0 ||\n"
+                     "      nativeHeight == 0 || nativeWidth == 0) {\n",
+                     "resize_swapchain_internal")
+    t = replace_once(t, "    g_surface.Configure(&surfaceConfiguration);\n",
+                     "    if (g_surface) g_surface.Configure(&surfaceConfiguration);\n", "Configure")
+    return t
+
+
+def aurora(t: str) -> str:
+    t = replace_once(t, "    if (!g_surface) {\n      webgpu::refresh_surface(true);\n",
+                     "    if (!g_surface && !galaxy_choya_presents_now()) {\n      webgpu::refresh_surface(true);\n",
+                     "begin_frame: refresh_surface")
+    # El SDL_Renderer de ImGui (backend nulo) tomaría la superficie GL de la ventana (y el KMS en la consola): con
+    # Choya la ventana es del hilo de pantalla. ImGui sigue por su camino WebGPU (nulo): no se ve (BLOQUEOS).
+    return replace_once(t, "  if (webgpu::g_backendType == wgpu::BackendType::Null) {\n"
+                           "    AURORA_ASSERT(window::create_renderer(),",
+                        "  if (webgpu::g_backendType == wgpu::BackendType::Null && !galaxy_choya_presents_now()) {\n"
+                        "    AURORA_ASSERT(window::create_renderer(),",
+                        "initialize: create_renderer")
+
+
+def window(t: str) -> str:
+    return replace_once(
+        t, "  SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;\n",
+        "  SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;\n"
+        "  if (galaxy_choya_window_flags != nullptr) {  // galaxy-choya-native: SDL_WINDOW_OPENGL si Choya usa SDL\n"
+        "    flags |= static_cast<SDL_WindowFlags>(galaxy_choya_window_flags());\n"
+        "  }\n",
+        "create_window: flags")
 
 
 def recording(t: str) -> str:
@@ -49,6 +121,19 @@ def recording(t: str) -> str:
         "  const PipelineRef ref = find_pipeline(config, get_render_target_layout());\n"
         "  ::galaxy_choya::register_clear_pipeline(ref, config);\n  return ref;\n}",
         "pipeline_ref(clear)")
+    # Lectura del EFB a la hora de un token (efb_recording.inc de MacioGalaxy, pegado aquí): con Choya la hace el
+    # núcleo sobre lo grabado hasta este punto; Aurora sigue partiendo el cuadro igual (petari_submit_segment).
+    t = replace_once(
+        t,
+        "  enqueue_pass(frame, g_recorder.currentRenderPass);\n  petari_submit_segment(frame, source, ticket, ready);\n",
+        "  enqueue_pass(frame, g_recorder.currentRenderPass);\n"
+        "  if (::galaxy_choya::enabled()) {\n"
+        "    ::galaxy_choya::capture_segment(frame, ticket, ready,\n"
+        "                                    ::galaxy_choya::SnapshotArea{logical.x, logical.y, source.offsetX,\n"
+        "                                                                 source.offsetY, source.scaleX, source.scaleY});\n"
+        "  }\n"
+        "  petari_submit_segment(frame, source, ticket, ready);\n",
+        "petari_capture_current_efb")
     # Clasificador de dibujos: necesita encode_draw<>, que está en el espacio anónimo de este archivo.
     tail = "} // namespace aurora::gfx\n"
     if not t.rstrip().endswith(tail.strip()):
@@ -112,7 +197,10 @@ def framebuffer(t: str) -> str:
 
 
 KINDS = {"frame": frame, "recording": recording, "command_processor": command_processor, "texture": texture,
-         "framebuffer": framebuffer}
+         "framebuffer": framebuffer, "gpu": gpu, "aurora": aurora, "window": window}
+# Los de aurora_core no ven el puente (está en aurora_gx): solo declaraciones débiles, sin el .hpp.
+WEAK_ONLY = {"gpu": PRESENTS, "aurora": PRESENTS,
+             "window": 'extern "C" uint64_t galaxy_choya_window_flags() __attribute__((weak));  // galaxy-choya-native\n'}
 
 
 def main() -> int:
@@ -121,7 +209,13 @@ def main() -> int:
         text = f.read()
     if "galaxy_choya_bridge.hpp" in text:
         raise SystemExit(f"patch_aurora_bridge: {src} ya trae el puente (la entrada debe ser la fuente sin él)")
-    text = add_include(KINDS[kind](text))
+    if kind in WEAK_ONLY:
+        text = KINDS[kind](text)
+        i = text.index("#include")
+        j = text.index("\n", i) + 1
+        text = text[:j] + WEAK_ONLY[kind] + text[j:]
+    else:
+        text = add_include(KINDS[kind](text))
     old = None
     try:
         with open(dst, encoding="utf-8") as f:

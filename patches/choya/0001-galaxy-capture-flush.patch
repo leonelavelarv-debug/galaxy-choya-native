@@ -1,0 +1,47 @@
+diff --git a/choya/data/aurora/choya_gx_core.cpp b/choya/data/aurora/choya_gx_core.cpp
+index 041a738..562160a 100644
+--- a/choya/data/aurora/choya_gx_core.cpp
++++ b/choya/data/aurora/choya_gx_core.cpp
+@@ -4542,6 +4542,27 @@ void capture_clear(uint64_t pipeline, const float rgba[4], float depth, bool use
+   g_recording.items.push_back(it);
+ }
+ 
++void capture_flush() noexcept {
++  if (g_recordingActive) capture_end(false);
++  std::unique_lock lock(g_frameMutex);
++  if (g_open.empty()) return;
++  Group g;
++  g.frames.swap(g_open);
++  for (const Frame& f : g.frames) {
++    for (const Item& it : f.items) {
++      if (it.op == Op::Copy) g.copies.push_back(it.copy.tex);
++      if (it.op == Op::PaletteConv) g.copies.push_back(it.conv.dst);
++    }
++  }
++  std::sort(g.copies.begin(), g.copies.end());
++  g.copies.erase(std::unique(g.copies.begin(), g.copies.end()), g.copies.end());
++  // Un grupo sin cuadro mostrado nunca se salta (draw_frame solo salta grupos cuyo último lote se muestra).
++  g_queue.push_back(std::move(g));
++  g_openFlushes.fetch_add(1, std::memory_order_relaxed);
++  lock.unlock();
++  if (g_wake != nullptr) g_wake();
++}
++
+ void capture_end(bool present) noexcept {
+   if (!g_recordingActive) return;
+   g_recordingActive = false;
+diff --git a/choya/data/aurora/choya_gx_core.hpp b/choya/data/aurora/choya_gx_core.hpp
+index d49ed78..f8f7524 100644
+--- a/choya/data/aurora/choya_gx_core.hpp
++++ b/choya/data/aurora/choya_gx_core.hpp
+@@ -185,6 +185,10 @@ void capture_draw(uint64_t pipeline, uint32_t idxOffset, uint32_t indexCount, ui
+ void capture_clear(uint64_t pipeline, const float rgba[4], float depth, bool useScissor, const Rect& rect) noexcept;
+ // present = false: lote partido a mitad de cuadro (staging lleno); se dibuja en el EFB sin mostrarse.
+ void capture_end(bool present = true) noexcept;
++// galaxy-choya-native: como capture_end(false), pero entrega al motor ya mismo los lotes sin mostrar del cuadro en
++// curso (y despierta al hilo que dibuja). Para lecturas del EFB a la hora de un token (GXPeekZ/GXPeekARGB): el lote
++// termina con sus copias de lectura y no puede esperar a que el juego muestre el cuadro.
++void capture_flush() noexcept;
+ void capture_discard() noexcept;
+ bool capturing() noexcept;
+ 
