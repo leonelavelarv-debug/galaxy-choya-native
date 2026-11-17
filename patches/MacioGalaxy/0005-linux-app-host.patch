@@ -1,0 +1,362 @@
+diff --git a/native/app/app_main.cpp b/native/app/app_main.cpp
+index 0a93a51..e009f03 100644
+--- a/native/app/app_main.cpp
++++ b/native/app/app_main.cpp
+@@ -10,9 +10,11 @@ extern "C" bool aurora_imgui_update_texture(unsigned long long, unsigned, unsign
+ 
+ #include <SDL3/SDL_init.h>
+ #include <SDL3/SDL_hints.h>
++#if defined(__APPLE__)
+ #include <CoreFoundation/CoreFoundation.h>
+ #include <objc/message.h>
+ #include <objc/runtime.h>
++#endif
+ #include <pthread/qos.h>
+ #include <SDL3/SDL_timer.h>
+ #include <SDL3/SDL_video.h>
+@@ -72,6 +74,9 @@ namespace {
+ // purpose) macOS asks "reopen windows?" in a modal alert at the next launch, which blocks the game
+ // (and background test runs) before the first frame. Registration domain only: nothing is persisted.
+ void disableWindowRestoration() {
++#if !defined(__APPLE__)
++    return;  // macOS window restoration only (galaxy-choya-native)
++#else
+     const void* keys[2] = {CFSTR("ApplePersistenceIgnoreState"), CFSTR("NSQuitAlwaysKeepsWindows")};
+     const void* values[2] = {kCFBooleanTrue, kCFBooleanFalse};
+     CFDictionaryRef defaults = CFDictionaryCreate(nullptr, keys, values, 2, &kCFTypeDictionaryKeyCallBacks,
+@@ -80,6 +85,7 @@ void disableWindowRestoration() {
+     const id standard = sendObject(reinterpret_cast<id>(objc_getClass("NSUserDefaults")), sel_registerName("standardUserDefaults"));
+     reinterpret_cast<void (*)(id, SEL, CFDictionaryRef)>(objc_msgSend)(standard, sel_registerName("registerDefaults:"), defaults);
+     CFRelease(defaults);
++#endif
+ }
+ 
+ 
+@@ -904,6 +910,7 @@ int main(int argc, char** argv) {
+             std::fprintf(stderr, "petari: background video initialization: %s\n", SDL_GetError());
+             return 1;
+         }
++#if defined(__APPLE__)
+         const auto sendObject = reinterpret_cast<id (*)(id, SEL)>(objc_msgSend);
+         const id application = sendObject(reinterpret_cast<id>(objc_getClass("NSApplication")),
+                                           sel_registerName("sharedApplication"));
+@@ -913,6 +920,7 @@ int main(int argc, char** argv) {
+             std::fputs("petari: could not set background app activation policy\n", stderr);
+             return 1;
+         }
++#endif
+         // Opt-in (PETARI_SMOKE_QOS=1): declare the hidden process user-initiated and latency
+         // critical (no App Nap) and raise this thread's QoS (later threads inherit it). The A/B
+         // on EggStarGalaxy s1 (qos-on-v2 / qos-off-v2) showed no benefit once machine load was
+@@ -920,6 +928,10 @@ int main(int argc, char** argv) {
+         if (const char* qosEnv = std::getenv("PETARI_SMOKE_QOS"); !qosEnv || qosEnv[0] != '1') {
+             std::fputs("PETARI SMOKE QOS: default (PETARI_SMOKE_QOS=1 enables activity + QoS boost)\n", stderr);
+         } else {
++#if !defined(__APPLE__)
++            const int qos = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
++            std::fprintf(stderr, "PETARI SMOKE QOS: thread_qos=%s (Linux: nice)\n", qos == 0 ? "user-interactive" : "unavailable");
++#else
+             const auto sendClass = reinterpret_cast<id (*)(id, SEL)>(objc_msgSend);
+             const auto makeString = reinterpret_cast<id (*)(id, SEL, const char*)>(objc_msgSend);
+             const auto beginActivity = reinterpret_cast<id (*)(id, SEL, unsigned long long, id)>(objc_msgSend);
+@@ -933,6 +945,7 @@ int main(int argc, char** argv) {
+             const int qos = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+             std::fprintf(stderr, "PETARI SMOKE QOS: activity=%s thread_qos=%s\n", activity ? "user-initiated+latency-critical" : "unavailable",
+                          qos == 0 ? "user-interactive" : "unavailable");
++#endif
+         }
+         std::fputs("PETARI SMOKE BACKGROUND: enabled; physical input isolated; nonfocusable background window; VI pacing unchanged\n", stderr);
+     }
+diff --git a/native/app/display_link.cpp b/native/app/display_link.cpp
+index 3415452..f78102c 100644
+--- a/native/app/display_link.cpp
++++ b/native/app/display_link.cpp
+@@ -7,17 +7,28 @@
+ 
+ #include <petari/present_pacing.hpp>
+ 
+-#include <CoreFoundation/CoreFoundation.h>
+ #include <SDL3/SDL_properties.h>
+ #include <SDL3/SDL_video.h>
++#if defined(__APPLE__)
++#include <CoreFoundation/CoreFoundation.h>
+ #include <objc/message.h>
+ #include <objc/runtime.h>
++#endif
+ 
+ #include <atomic>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <thread>
+ 
++#if !defined(__APPLE__)
++// Linux (galaxy-choya-native): no NSView display link. VI keeps its own 59.94 Hz timer, the fallback MacioGalaxy already
++// uses when the display link is unavailable (README "Frame pacing and the display clock").
++namespace PetariNative::App::DisplayLink {
++void start(void*) {
++    std::fprintf(stderr, "[vi clock] no display link on Linux: VI stays on its timer\n");
++}
++}  // namespace PetariNative::App::DisplayLink
++#else
+ namespace PetariNative::App::DisplayLink {
+ namespace {
+ 
+@@ -94,3 +105,4 @@ void start(void* window) {
+ }
+ 
+ }  // namespace PetariNative::App::DisplayLink
++#endif
+diff --git a/native/app/latency_report.cpp b/native/app/latency_report.cpp
+index 30e5d67..67ea56f 100644
+--- a/native/app/latency_report.cpp
++++ b/native/app/latency_report.cpp
+@@ -6,11 +6,13 @@
+ #include <petari/latency_probe.hpp>
+ #include <petari/present_stats.hpp>
+ 
+-#include <SDL3/SDL_metal.h>
+ #include <SDL3/SDL_properties.h>
+ #include <SDL3/SDL_video.h>
++#if defined(__APPLE__)
++#include <SDL3/SDL_metal.h>
+ #include <objc/message.h>
+ #include <objc/runtime.h>
++#endif
+ 
+ #include <atomic>
+ #include <chrono>
+@@ -37,6 +39,7 @@ const char* stageName(int stage) {
+     return stage >= 0 && stage <= Probe::Presented ? kNames[stage] : "?";
+ }
+ 
++#if defined(__APPLE__)
+ // Presentation statistics (petari/present_stats.hpp): -[CAMetalLayer nextDrawable]
+ // is wrapped so every drawable Aurora's render worker acquires for a frame gets a
+ // presented handler. Dawn's Metal swap chain calls nextDrawable inside
+@@ -77,19 +80,31 @@ void installPresentTracking() {
+     gOriginalNextDrawable = reinterpret_cast<NextDrawableFn>(method_getImplementation(method));
+     method_setImplementation(method, reinterpret_cast<IMP>(trackedNextDrawable));
+ }
++#endif
+ 
+ }  // namespace
+ 
+ void logLayer(const char* when) {
++#if !defined(__APPLE__)
++    // Linux (galaxy-choya-native): there is no CAMetalLayer; the GLES swap is owned by the Choya engine.
++    if (Probe::enabled()) std::fprintf(stderr, "[latency] (%s) no Metal layer on Linux: on-screen time is not measured\n", when);
++#else
+     if (gLayer == nullptr) return;
+     const auto count = reinterpret_cast<unsigned long (*)(void*, SEL)>(objc_msgSend)(gLayer, sel_registerName("maximumDrawableCount"));
+     const auto sync = reinterpret_cast<BOOL (*)(void*, SEL)>(objc_msgSend)(gLayer, sel_registerName("displaySyncEnabled"));
+     const auto transaction = reinterpret_cast<BOOL (*)(void*, SEL)>(objc_msgSend)(gLayer, sel_registerName("presentsWithTransaction"));
+     std::fprintf(stderr, "[latency] metal layer (%s): maximumDrawableCount %lu, displaySyncEnabled %d, presentsWithTransaction %d\n",
+                  when, count, sync ? 1 : 0, transaction ? 1 : 0);
++#endif
+ }
+ 
+ void configureLayer(void* window) {
++#if !defined(__APPLE__)
++    (void)window;
++    (void)gNSWindow;
++    if (Probe::enabled()) logLayer("startup");
++    return;
++#else
+     auto* sdlWindow = static_cast<SDL_Window*>(window);
+     auto* view = static_cast<SDL_MetalView>(SDL_GetPointerProperty(SDL_GetWindowProperties(sdlWindow), "aurora.metal_view", nullptr));
+     gLayer = view != nullptr ? SDL_Metal_GetLayer(view) : nullptr;
+@@ -113,6 +128,7 @@ void configureLayer(void* window) {
+             reinterpret_cast<unsigned long (*)(void*, SEL)>(objc_msgSend)(gLayer, sel_registerName("maximumDrawableCount"))));
+     }
+     if (Probe::enabled()) logLayer("startup");
++#endif
+ }
+ 
+ void frame(bool gameplay) {
+diff --git a/native/app/smoke_storage.cpp b/native/app/smoke_storage.cpp
+index f5b62a7..e28cc69 100644
+--- a/native/app/smoke_storage.cpp
++++ b/native/app/smoke_storage.cpp
+@@ -1,7 +1,12 @@
+ #include "smoke_storage.hpp"
++#if defined(__APPLE__)
+ #include <CommonCrypto/CommonDigest.h>
+ #include <copyfile.h>
+ #include <mach-o/dyld.h>
++#else
++#include <galaxy_darwin_compat.h>  // _NSGetExecutablePath (galaxy-choya-native)
++#include <galaxy_sha256.h>
++#endif
+ #include <dlfcn.h>
+ #include <fcntl.h>
+ #include <sys/file.h>
+@@ -29,6 +34,14 @@ int lockDirectory(const fs::path& directory) {
+     return fd;
+ }
+ 
++#if !defined(__APPLE__)
++// Linux (galaxy-choya-native): the background smoke fixture isolates Metal's per-user Darwin cache namespace, which
++// does not exist here. The mode fails with this message instead of running without isolation.
++constexpr int _CS_DARWIN_USER_CACHE_DIR = 0, _CS_DARWIN_USER_TEMP_DIR = 1;
++fs::path darwinDirectory(int = _CS_DARWIN_USER_CACHE_DIR) {
++    throw std::runtime_error("background smoke cache isolation needs macOS (Darwin user cache namespace)");
++}
++#else
+ fs::path darwinDirectory(int key = _CS_DARWIN_USER_CACHE_DIR) {
+     const size_t size = confstr(key, nullptr, 0);
+     if (!size) throw std::runtime_error("cannot resolve Darwin cache directory");
+@@ -39,6 +52,7 @@ fs::path darwinDirectory(int key = _CS_DARWIN_USER_CACHE_DIR) {
+     if (result.filename().empty()) result = result.parent_path();
+     return result;
+ }
++#endif
+ 
+ void seedDatabase(const fs::path& source, const fs::path& destination) {
+     if (!fs::is_regular_file(source) || fs::exists(destination)) return;
+@@ -67,6 +81,7 @@ std::string executableSha256() {
+     if (_NSGetExecutablePath(buffer.data(), &size) != 0) return {};
+     std::ifstream in(fs::weakly_canonical(buffer.data()), std::ios::binary);
+     if (!in) return {};
++#if defined(__APPLE__)
+     CC_SHA256_CTX context;
+     CC_SHA256_Init(&context);
+     std::vector<char> chunk(1 << 20);
+@@ -76,6 +91,16 @@ std::string executableSha256() {
+     CC_SHA256_Final(digest, &context);
+     char hex[2 * CC_SHA256_DIGEST_LENGTH + 1];
+     for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) std::snprintf(hex + 2 * i, 3, "%02x", digest[i]);
++#else
++    galaxy::Sha256 context;
++    std::vector<char> chunk(1 << 20);
++    while (in.read(chunk.data(), static_cast<std::streamsize>(chunk.size())) || in.gcount() > 0)
++        context.update(chunk.data(), static_cast<std::size_t>(in.gcount()));
++    unsigned char digest[32];
++    context.final(digest);
++    char hex[2 * 32 + 1];
++    for (int i = 0; i < 32; ++i) std::snprintf(hex + 2 * i, 3, "%02x", digest[i]);
++#endif
+     return hex;
+ }
+ 
+@@ -115,8 +140,14 @@ void seedMetal(const fs::path& source, const fs::path& destination) {
+             if (entry.is_directory()) fs::create_directories(target);
+             else if (entry.is_regular_file()) {
+                 // APFS clones are independent files, including later appends.
++#if defined(__APPLE__)
+                 if (copyfile(entry.path().c_str(), target.c_str(), nullptr, COPYFILE_ALL | COPYFILE_CLONE) != 0)
+                     throw std::runtime_error("cannot seed Metal cache " + entry.path().string());
++#else
++                std::error_code copyEc;
++                fs::copy_file(entry.path(), target, fs::copy_options::overwrite_existing, copyEc);
++                if (copyEc) throw std::runtime_error("cannot seed pipeline cache " + entry.path().string());
++#endif
+                 ++count;
+             }
+         }
+diff --git a/native/app/soak_telemetry.cpp b/native/app/soak_telemetry.cpp
+index e29768f..8dbe890 100644
+--- a/native/app/soak_telemetry.cpp
++++ b/native/app/soak_telemetry.cpp
+@@ -8,9 +8,15 @@
+ 
+ #include <dlfcn.h>
+ #include <pthread.h>
++#if defined(__APPLE__)
+ #include <libproc.h>
+ #include <mach/mach.h>
+ #include <malloc/malloc.h>
++#else
++#include <dirent.h>
++#include <malloc.h>
++#include <galaxy_darwin_compat.h>  // task_threads (galaxy-choya-native)
++#endif
+ #include <unistd.h>
+ 
+ #include <algorithm>
+@@ -28,8 +34,10 @@
+ #include "petari/platform/audio.hpp"
+ 
+ // The Objective-C runtime, declared here: its headers' BOOL clashes with the SDK's.
++#if defined(__APPLE__)
+ extern "C" void* sel_registerName(const char* name);
+ extern "C" void objc_msgSend(void);
++#endif
+ 
+ namespace PetariNative::App::Soak {
+ namespace {
+@@ -67,6 +75,9 @@ double mb(double bytes) {
+ }
+ 
+ double metalAllocatedMb() {
++#if !defined(__APPLE__)
++    return -1;  // no Metal on Linux: the CSV column reports -1 (galaxy-choya-native)
++#else
+     using CreateDevice = void* (*)();
+     static void* device = [] {
+         auto create = reinterpret_cast<CreateDevice>(dlsym(RTLD_DEFAULT, "MTLCreateSystemDefaultDevice"));
+@@ -78,6 +89,7 @@ double metalAllocatedMb() {
+     static void* selector = sel_registerName("currentAllocatedSize");
+     using Getter = unsigned long (*)(void*, void*);
+     return mb(static_cast<double>(reinterpret_cast<Getter>(objc_msgSend)(device, selector)));
++#endif
+ }
+ 
+ int threadCount() {
+@@ -94,6 +106,15 @@ int threadCount() {
+ }
+ 
+ int fdCount() {
++#if !defined(__APPLE__)
++    int n = 0;
++    if (DIR* d = opendir("/proc/self/fd")) {
++        while (dirent* e = readdir(d)) n += e->d_name[0] != '.';
++        closedir(d);
++        return n - 1;  // the directory's own descriptor
++    }
++    return -1;
++#else
+     const int bytes = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, nullptr, 0);
+     if (bytes <= 0) {
+         return -1;
+@@ -101,6 +122,7 @@ int fdCount() {
+     std::vector<proc_fdinfo> fds(static_cast<std::size_t>(bytes) / sizeof(proc_fdinfo) + 16);
+     const int used = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, fds.data(), static_cast<int>(fds.size() * sizeof(proc_fdinfo)));
+     return used <= 0 ? -1 : used / static_cast<int>(sizeof(proc_fdinfo));
++#endif
+ }
+ 
+ double percentile(std::vector<float>& sorted, double p) {
+@@ -131,11 +153,33 @@ void writeSample(State& s) {
+     }
+     std::sort(frames.begin(), frames.end());
+     const double elapsed = std::chrono::duration<double>(Clock::now() - s.start).count();
++#if defined(__APPLE__)
+     task_vm_info_data_t vm{};
+     mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+     task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&vm), &count);
+     malloc_statistics_t mallocStats{};
+     malloc_zone_statistics(nullptr, &mallocStats);
++#else
++    // Linux (galaxy-choya-native): footprint = RSS + swap, resident = RSS, compressed = swap (zram on the console);
++    // malloc from mallinfo2 (glibc). Same CSV columns as on macOS.
++    struct {
++        unsigned long long phys_footprint = 0, resident_size = 0, compressed = 0;
++    } vm;
++    if (FILE* status = std::fopen("/proc/self/status", "r")) {
++        char line[256];
++        while (std::fgets(line, sizeof line, status)) {
++            unsigned long long kb = 0;
++            if (std::sscanf(line, "VmRSS: %llu kB", &kb) == 1) vm.resident_size = kb * 1024ull;
++            else if (std::sscanf(line, "VmSwap: %llu kB", &kb) == 1) vm.compressed = kb * 1024ull;
++        }
++        std::fclose(status);
++    }
++    vm.phys_footprint = vm.resident_size + vm.compressed;
++    const struct mallinfo2 mi = mallinfo2();
++    struct {
++        std::size_t size_in_use, size_allocated;
++    } mallocStats{mi.uordblks + mi.hblkhd, mi.arena + mi.hblkhd};
++#endif
+     int over33 = 0;
+     for (float ms : frames) {
+         over33 += ms > 1000.0f / 30.0f;

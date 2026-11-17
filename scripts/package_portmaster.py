@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Arma el paquete PortMaster de galaxy-choya-native.
 
-  python3 scripts/package_portmaster.py --binary build/aarch64/macio/native/app/petari --out out/portmaster
+  python3 scripts/package_portmaster.py --binary build/aarch64/macio/native/app/Petari --out out/portmaster
 
 Estructura (como en la microSD):
   SD1/ROMS/ports/Galaxy-Choya.sh

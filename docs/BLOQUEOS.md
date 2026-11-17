@@ -31,20 +31,16 @@ Cada uno con archivo, función, causa y siguiente acción. Ninguno se "resolvió
   `AURORA_DAWN_PROVIDER=system` apuntando al nulo. Las lecturas del EFB y `GXDrawDone` no pueden ir al nulo: los
   atiende el núcleo de Choya (B1/B7).
 
-## B3 — La app `petari` no enlaza en Linux (shell de macOS)
+## B3 — Shell de la app de macOS (resuelto en la PC; queda la presentación de la consola)
 
-- **Estado comprobado:** con `GALAXY_GX=ON`, Aurora (`aurora_core`, `aurora_gx` con todos los parches Python de
-  MacioGalaxy), SDL3, el juego y las bibliotecas **compilan** en Linux x86-64. Fallan 5 archivos del shell de la app:
-  - `native/app/app_main.cpp`: `objc/message.h`, `CoreFoundation` (defaults de AppKit, política de activación,
-    `NSProcessInfo beginActivity` contra App Nap).
-  - `native/app/display_link.cpp`: CVDisplayLink/CADisplayLink (reloj de VI pegado a la pantalla).
-  - `native/app/latency_report.cpp`: `CAMetalLayer`/`presentedTime` (Metal).
-  - `native/app/soak_telemetry.cpp`: `libproc` (`proc_pidinfo`), Metal (`currentAllocatedSize`).
-  - `native/app/smoke_storage.cpp`: `CommonCrypto` (SHA de guardados en las pruebas de humo).
-- **Siguiente acción:** parche 0005 con un host Linux: los bloques de AppKit no aplican (`#if __APPLE__`); el reloj de
-  VI queda en el modo temporizador de 59.94 Hz que MacioGalaxy ya tiene (`PETARI_VI_CLOCK=timer`) hasta que el
-  núcleo de Choya informe del intercambio EGL; telemetría desde `/proc/self/{status,fd}`; SHA-256 portátil para las
-  pruebas de humo; `latency_report` sin tiempo de presentación (se informa "no disponible").
+- **Hecho (parche 0005):** `app_main.cpp`, `display_link.cpp`, `latency_report.cpp`, `soak_telemetry.cpp` y
+  `smoke_storage.cpp` compilan en Linux (AppKit solo en macOS; VI en su temporizador de 59.94 Hz, el respaldo que
+  MacioGalaxy ya tenía; telemetría desde `/proc` y `mallinfo2`; SHA-256 portátil; el modo de humo en segundo plano,
+  que aísla la caché de Metal, falla con un mensaje explícito). **El ejecutable `Petari` completo (juego + Aurora +
+  SDL3 + Dawn de referencia) enlaza en Linux x86-64 y arranca hasta pedir el disco:**
+  `petari: disc …/RMGE01 does not contain files/ or DATA/files/ from an extracted disc`.
+- **Queda:** en la consola no hay Dawn ni Metal: la presentación tiene que ser la del núcleo de Choya (B1, B2, B4).
+  Sin disco no se puede pasar del arranque (B9).
 
 ## B4 — Ventana/contexto en la consola
 

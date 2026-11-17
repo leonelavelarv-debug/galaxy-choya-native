@@ -114,3 +114,17 @@ function(galaxy_add_direct_j3d)
     endif()
 endfunction()
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL galaxy_add_direct_j3d)
+
+# El paquete precompilado de Dawn (solo referencia en la PC, AURORA_DAWN_PROVIDER=package) está compilado con
+# libstdc++. Su API es C (webgpu.h), así que convive con la libc++ del port: se añade libstdc++ al final de la línea de
+# enlace solo en la compilación de la PC con Aurora. En la consola no hay Dawn (docs/BLOQUEOS.md, B2).
+if(PETARI_BUILD_GX_PROBE AND NOT CMAKE_CROSSCOMPILING)
+    # Ruta completa (con -stdlib=libc++ clang no busca en la carpeta de GCC). Compartida, no estática: la estática
+    # duplica los símbolos de libsupc++ que ya da la libc++abi del port.
+    execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -stdlib=libstdc++ -print-file-name=libstdc++.so
+                    OUTPUT_VARIABLE _galaxy_libstdcxx OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT EXISTS "${_galaxy_libstdcxx}")
+        message(FATAL_ERROR "galaxy-choya-native: el Dawn precompilado de la PC necesita libstdc++.so (no encontrada)")
+    endif()
+    set(CMAKE_CXX_STANDARD_LIBRARIES "${CMAKE_CXX_STANDARD_LIBRARIES} ${_galaxy_libstdcxx}")
+endif()

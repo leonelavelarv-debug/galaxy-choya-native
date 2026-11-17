@@ -16,8 +16,8 @@ Port nativo de **Super Mario Galaxy** para la **Anbernic RG35XX H** (Linux aarch
 
 | Hito | Estado |
 | --- | --- |
-| A. Base Linux reproducible | **hecho en PC x86-64**: dependencias fijadas, 3 parches verificados, núcleo + servicios + 1641 archivos del juego compilan, 59/59 pruebas de MacioGalaxy pasan. aarch64: toolchain y contenedor listos, sin ejecutar aquí |
-| B. Modelo real con Choya (GX) | bloqueado: puente Aurora 08122911 → Choya por escribir (B1), app con Aurora aún sin enlazar en Linux (B3), sin disco para probar |
+| A. Base Linux reproducible | **hecho en PC x86-64**: dependencias fijadas, 5 parches verificados, núcleo + servicios + 1641 archivos del juego compilan, 59/59 pruebas de MacioGalaxy pasan. aarch64: toolchain y contenedor listos, sin ejecutar aquí |
+| B. Modelo real con Choya (GX) | **app completa (juego + Aurora) enlaza en Linux x86-64 y arranca hasta pedir el disco**; falta el puente Aurora 08122911 → Choya (B1), el WebGPU nulo para la consola (B2) y un disco para probar |
 | C. Arranque e interacción | pendiente de B |
 | D. Escena jugable | pendiente |
 | E. Ciclo de vida completo | pendiente |
@@ -66,7 +66,7 @@ GALAXY_GX=ON sh scripts/build.sh host
 ```sh
 docker build -t galaxy-choya-aarch64 -f docker/Dockerfile.aarch64 docker
 docker run --rm -v "$PWD":/src -w /src galaxy-choya-aarch64 sh scripts/build.sh aarch64
-python3 scripts/package_portmaster.py --binary build/aarch64/macio/native/app/petari --out out/portmaster
+python3 scripts/package_portmaster.py --binary build/aarch64/macio/native/app/Petari --out out/portmaster
 ```
 
 En la PC con Windows 11: lo mismo desde WSL2 (Ubuntu) con Docker Desktop encendido. El paquete comprueba que el

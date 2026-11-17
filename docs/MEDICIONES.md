@@ -11,7 +11,8 @@ de la consola y no se usan para prometer FPS.
 | Núcleo, memoria, heaps, kernel, recursos, plataforma, entrada, editor, menú Home (`all`) | compila (435 objetivos) |
 | `petari_game_objects`: los 1641 archivos de `src/Game` + BCSV incrustado | compila (tras los parches 0001-0003) |
 | Puente J3D de la ruta directa (`galaxy_direct_j3d`) contra las cabeceras J3D de Petari | compila |
-| Aurora + app `petari` (`PETARI_BUILD_GX_PROBE=ON`) | ver `docs/BLOQUEOS.md` (B3) |
+| Aurora `08122911` + parches de MacioGalaxy, SDL3, Dear ImGui, Tracy, zstd (`GALAXY_GX=ON`) | compila |
+| App `Petari` completa (juego + Aurora + SDL3 + Dawn de referencia), tras el parche 0005 | **enlaza** (ELF x86-64, 38 MB) y arranca hasta pedir el disco (sin datos aquí) |
 
 ## Pruebas de MacioGalaxy en Linux (`ctest -LE "timing|slow"`)
 
@@ -45,8 +46,8 @@ Coste de CPU de preparar y entregar el cuadro por la ruta directa (sin GPU), 30 
 | 500 | 0,32 ms | 19,9 ms |
 | 2000 | 0,80 ms | 66,0 ms |
 
-Qué **no** mide esto: el coste de la ruta GX completa (FIFO + decodificación de Aurora) en el mismo escenario, porque
-la app con Aurora todavía no corre aquí (B3). Sin esa referencia no se puede afirmar cuánto ahorra la ruta directa;
+Qué **no** mide esto: el coste de la ruta GX completa (FIFO + decodificación de Aurora) en el mismo escenario: la app
+con Aurora ya enlaza, pero sin disco no llega a dibujar nada (B9). Sin esa referencia no se puede afirmar cuánto ahorra la ruta directa;
 solo que su propio coste de preparación es bajo y lineal en el número de dibujos. La comparación GX vs. directa con la
 misma escena, cámara, resolución, recursos y recorrido queda para la consola (procedimiento abajo).
 

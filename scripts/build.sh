@@ -49,6 +49,7 @@ cmake -S "$ROOT/work/MacioGalaxy" -B "$B/macio" -G Ninja $TOOLCHAIN_ARGS $GX_ARG
   -DCMAKE_PROJECT_PetariNative_INCLUDE="$ROOT/cmake/linux_port.cmake" \
   -DGALAXY_LIBCXX_ROOT="$LIBCXX"
 cmake --build "$B/macio" -j "$JOBS"
+[ "$GALAXY_GX" = ON ] && cmake --build "$B/macio" -j "$JOBS" --target petari
 
 # Motor GLES de Choya, adaptador y API directa (independientes de Aurora).
 # shellcheck disable=SC2086

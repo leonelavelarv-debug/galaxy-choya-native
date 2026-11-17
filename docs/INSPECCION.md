@@ -97,7 +97,8 @@ alfa, mezcla, profundidad) y grupos de texturas. Eso basta para una ruta directa
 | MacioGalaxy juega en macOS (README) | documentado |
 | El núcleo y los servicios de MacioGalaxy compilan en Linux y sus 59 pruebas pasan | **comprobado (x86-64)** |
 | Los 1641 archivos del juego compilan en Linux | **comprobado (x86-64)** |
-| Aurora + app `petari` compilan en Linux | en curso / ver BLOQUEOS |
+| Aurora (con los ~30 parches Python de MacioGalaxy) y SDL3 compilan en Linux | **comprobado (x86-64)** |
+| La app `Petari` enlaza en Linux y arranca hasta pedir el disco | **comprobado (x86-64)** |
 | El motor GLES de Choya dibuja con la Aurora única | **comprobado (Mesa)** |
 | La ruta directa produce la misma imagen que la ruta de captura GX | **comprobado (Mesa, escena sintética)** |
 | Cualquier cosa en la RG35XX H | pendiente (no hay consola en este entorno) |
