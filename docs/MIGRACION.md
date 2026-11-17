@@ -1,7 +1,8 @@
 # Componentes migrados y componentes que siguen por GX
 
-Estado al 2026-11-17. La columna "Ruta GX" pasa por el puente `choya_bridge/` (Aurora 08122911 → núcleo de Choya),
-probado en PC con Mesa; sus aproximaciones están en BLOQUEOS.md (B1). "Implementado" = código en el repositorio, compilado y con prueba. "Validado" = comparado con
+Estado al 2026-11-17. La columna "Ruta GX" pasa por el puente `choya_bridge/` y el host de pantalla (Aurora 08122911
+→ núcleo de Choya → imagen), probado en PC con Mesa y datos sintéticos; auditoría de omisiones en BLOQUEOS.md (B1).
+La ruta directa NO recibe todavía formas de J3D en el ejecutable (B11): todas las escenas van por GX. "Implementado" = código en el repositorio, compilado y con prueba. "Validado" = comparado con
 la ruta GX en la RG35XX H con el juego (ninguno todavía).
 
 | Componente gráfico | Ruta GX (fase 1) | Ruta directa (fase 2) | Validado en consola |
@@ -23,7 +24,7 @@ la ruta GX en la RG35XX H con el juego (ninguno todavía).
 | Interfaz (layouts nw4r) | sí | no (GX) | — |
 | Sombras / efectos de profundidad | sí | no (GX) | — |
 | Copias del EFB a textura | sí | API implementada (`copy_to_texture`), sin uso desde J3D | no |
-| Lecturas del EFB (`GXPeek*`), `GXDrawDone`, `GXSetDrawSync` | sí (sync_bridge/efb_peek de MacioGalaxy) | no los emite: por eso direct solo se activa por escena | — |
+| Lecturas del EFB (`GXPeek*`), `GXDrawDone`, `GXSetDrawSync` | sí (sync_bridge de MacioGalaxy; lecturas del EFB desde el núcleo GLES, no desde Dawn nulo) | no los emite: por eso direct solo se activa por escena | — |
 | Vídeos (THP) | sí | no (GX) | — |
 
 Selección: `GALAXY_RENDERER=gx|direct`, por escena (`direct/src/renderer_select.cpp`). La lista de escenas validadas

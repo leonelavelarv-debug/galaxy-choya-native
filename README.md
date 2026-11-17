@@ -8,41 +8,49 @@ Port nativo de **Super Mario Galaxy** para la **Anbernic RG35XX H** (Linux aarch
   con una **API directa** que recibe la geometría y los materiales de J3D sin FIFO GX (fase 2).
 - No incluye datos del juego: necesitas tu propio disco (RMGE01) extraído.
 
-> **Estado honesto (2026-11-17):** hay base Linux reproducible, juego compilado en Linux, motor GLES, ruta directa
-> y puente Aurora → Choya funcionando en pruebas con Mesa (PC). **No es un port jugable todavía** y no se ha ejecutado en la RG35XX H. Ver
-> [docs/BLOQUEOS.md](docs/BLOQUEOS.md) y [docs/MEDICIONES.md](docs/MEDICIONES.md).
+> **Estado honesto (2026-11-17):** base Linux reproducible, juego compilado en Linux, puente Aurora → Choya,
+> **host de pantalla** (hilo GLES que dibuja y presenta), lecturas del EFB a la hora del token, sustitución desde
+> `assets.wlpk` y la ruta GX completa **sin Dawn** (WebGPU nulo de Choya) probados con datos sintéticos en Mesa (PC).
+> **No es un port jugable todavía**: no se ha ejecutado con un disco ni en la RG35XX H, y no se ha compilado para
+> aarch64 en esta máquina. Ver [docs/BLOQUEOS.md](docs/BLOQUEOS.md), [docs/MEDICIONES.md](docs/MEDICIONES.md) y
+> [docs/PRUEBA_CONSOLA.md](docs/PRUEBA_CONSOLA.md).
 
 ## Hitos
 
 | Hito | Estado |
 | --- | --- |
-| A. Base Linux reproducible | **hecho en PC x86-64**: dependencias fijadas, 6 parches verificados, núcleo + servicios + 1641 archivos del juego compilan, 65/65 pruebas de MacioGalaxy pasan (en serie). aarch64: toolchain y contenedor listos, sin ejecutar aquí |
-| B. Modelo real con Choya (GX) | app completa (juego + Aurora) enlaza en Linux x86-64 y arranca hasta pedir el disco. **Puente Aurora 08122911 → Choya escrito** (`choya_bridge/`) y probado de extremo a extremo con la API GX real en Mesa (PC); quedan aproximaciones listadas en B1, el WebGPU nulo para la consola (B2) y un disco para probar con modelos reales |
-| C. Arranque e interacción | pendiente de B |
+| A. Base Linux reproducible | **hecho en PC x86-64**: dependencias fijadas, parches verificados por contenido (`fetch_deps.py --verify`), 67/67 pruebas de MacioGalaxy en serie. aarch64: scripts, toolchain y contenedor revisados; **sin compilar aquí** (no hay sysroot arm64 ni red) |
+| B. Modelo real con Choya (GX) | app completa enlaza; con `CHOYA_GLES=1` Aurora graba (backend nulo, sin superficie) y el host de Choya crea el contexto, dibuja y presenta. Probado con la API GX real y datos sintéticos (pbuffer sin servidor gráfico y SDL/X11); sin disco |
+| C. Arranque e interacción | pendiente de un disco (la app llega hasta pedirlo) |
 | D. Escena jugable | pendiente |
-| E. Ciclo de vida completo | pendiente |
-| F. PortMaster y medición | lanzador, perfil de mando y empaquetador hechos; sin binario aarch64 ni medición en consola |
-| G. Ruta directa | **API implementada y probada** (0 píxeles distintos frente a la captura GX en Mesa), conversión de listas GX y puente J3D compilados, selector `GALAXY_RENDERER` |
-| H. Comparación | pendiente (necesita B y la consola) |
+| E. Ciclo de vida completo | salida limpia del hilo de pantalla implementada (leave/forceQuit, SIGTERM → SDL_EVENT_QUIT); sin probar en la consola |
+| F. PortMaster y medición | lanzador con selección de pantalla (KMSDRM o fbdev), comprobación ELF/GLIBC, empaquetador con `libs.aarch64/`; sin binario aarch64 ni medición |
+| G. Ruta directa | API y conversión probadas; **selector aplicado desde el juego** (registra el backend efectivo); las formas J3D aún no llegan a la ruta directa en el ejecutable (B11) |
+| H. Comparación | pendiente (necesita disco y consola) |
 
-## Puente Aurora → Choya (fase 1)
+## Ruta GX → Choya → pantalla
 
-Se activa en ejecución con `CHOYA_GLES=1` (el pack con `CHOYA_PAQUETE`); sin esa variable, Aurora dibuja como
-siempre. Prueba de extremo a extremo en la PC (necesita `xvfb-run` y Mesa con EGL sin superficie):
+`CHOYA_GLES=1` activa el puente (y el paquete con `CHOYA_PAQUETE`). La app usa entonces el backend nulo de Aurora, sin
+superficie WebGPU, y arranca el hilo `choya-pantalla`, dueño del contexto GLES (`GALAXY_PRESENT`):
 
-```
-GALAXY_GX=ON scripts/build.sh host
-ctest --test-dir build/host/macio -R galaxy_bridge_gx --output-on-failure
-```
+| `GALAXY_PRESENT` | Contexto | Dónde |
+| --- | --- | --- |
+| `sdl` | `SDL_GL_CreateContext` sobre la ventana de Aurora (`SDL_WINDOW_OPENGL`) | PC (X11/Wayland); consola con DRM (SDL KMSDRM con EGL/GBM) |
+| `fbdev` | EGL directo sobre `/dev/fb0` (ventana nativa del Mali de fbdev, como Choya) | consola sin `/dev/dri` |
+| `pbuffer` | EGL fuera de pantalla | pruebas sin servidor gráfico |
+| `auto` | `fbdev` si hay `/dev/fb0` y no hay DRM ni servidor gráfico; si no, `sdl` | por omisión |
 
-`GALAXY_BRIDGE_DEBUG=1` registra la configuración TEV de cada pipeline traducido. Lo que el puente aproxima o no
-traduce se cuenta y se escribe una vez en el log: ver [docs/BLOQUEOS.md](docs/BLOQUEOS.md) (B1).
+Si el contexto no se puede crear, la app sale con error (no simula cuadros). Cada 10 s el log separa cuadros de
+lógica, cuadros dibujados e imágenes presentadas. `GALAXY_BRIDGE_DEBUG=1` registra la TEV de cada pipeline y las
+texturas que no están en el paquete.
 
 ## Estructura
 
 ```
 deps/lock.json            commits fijados (MacioGalaxy, Choya, Aurora, libc++, dependencias de Aurora)
-patches/MacioGalaxy/      parches versionados (se aplican y verifican con scripts/fetch_deps.py)
+patches/                  parches versionados de MacioGalaxy (9) y Choya (1); fetch_deps.py los aplica y verifica
+choya_bridge/             puente Aurora → núcleo de Choya y host de pantalla (hilo GLES)
+nulo/                     WebGPU nulo de Choya para la Aurora única (sin Dawn)
 compat/darwin/            capa Darwin → Linux (Mach, libdispatch, QoS, dladdr con .symtab) con implementación real
 cmake/linux_port.cmake    se inyecta en el CMake de MacioGalaxy (CMAKE_PROJECT_PetariNative_INCLUDE)
 cmake/toolchains/         aarch64-linux-gnu (clang + lld, -mcpu=cortex-a53)
@@ -58,33 +66,39 @@ docs/                     INSPECCION, ARQUITECTURA, MIGRACION, BLOQUEOS, MEDICIO
 
 ## Compilar y probar en una PC Linux
 
-Requisitos: git, python3, cmake ≥ 3.25, ninja, clang 18 (o 16+), Mesa con EGL/GLES (para las pruebas gráficas).
+Requisitos: git, python3, cmake ≥ 3.25, ninja, clang 18 (o 16+), Mesa con EGL/GLES y `xvfb-run` (pruebas gráficas).
 
 ```sh
-git clone <este repositorio> galaxy-choya-native && cd galaxy-choya-native
-python3 scripts/fetch_deps.py                 # clona en los commits fijados y aplica los parches (falla si no encajan)
-sh scripts/build.sh host                      # libc++ estática + MacioGalaxy + motor de Choya + ruta directa
-ctest --test-dir build/host/macio -LE "timing|slow"
-ctest --test-dir build/host/choya             # motor de Choya, ruta directa, selector, lanzador, parches
+git clone https://github.com/leonelavelarv-debug/galaxy-choya-native.git && cd galaxy-choya-native
+python3 scripts/fetch_deps.py                 # commits fijados + parches (falla si no encajan)
+sh scripts/build.sh host                      # bibliotecas y pruebas: libc++ estática, MacioGalaxy, Choya, ruta directa
+ctest --test-dir build/host/macio -j1         # 67 pruebas (las de tiempos fallan si se corren en paralelo en 2 núcleos)
+ctest --test-dir build/host/choya
+
+GALAXY_GX=ON sh scripts/build.sh host         # + Aurora, puente y host de pantalla (Dawn de referencia para la PC)
+ctest --test-dir build/host/macio -R "galaxy_(bridge|host|pack)" --output-on-failure
+GALAXY_GX=ON GALAXY_WEBGPU_NULO=ON sh scripts/build.sh host   # lo mismo sin Dawn (WebGPU nulo, como la consola)
+
+sh scripts/build.sh host app                  # solo el ejecutable: build/host/app/native/app/Petari + check_elf
 ```
 
-Fase 1 con Aurora (descarga el paquete precompilado de Dawn para la PC):
-
-```sh
-GALAXY_GX=ON sh scripts/build.sh host
-```
+Las cabeceras de Dawn que usa el WebGPU nulo se extraen del paquete fijado (`fetch_deps.py --dawn-headers`; sin red:
+`--dawn-package-dir <paquete ya extraído>`) y se comprueban por hash.
 
 ## Compilar para la consola (aarch64)
 
 ```sh
 docker build -t galaxy-choya-aarch64 -f docker/Dockerfile.aarch64 docker
-docker run --rm -v "$PWD":/src -w /src galaxy-choya-aarch64 sh scripts/build.sh aarch64
-python3 scripts/package_portmaster.py --binary build/aarch64/macio/native/app/Petari --out out/portmaster
+docker run --rm -v "$PWD":/src -w /src galaxy-choya-aarch64 sh scripts/build.sh aarch64 app
+mkdir -p out/libs.aarch64 && for l in libsqlite3.so.0 libpng16.so.16 libfreetype.so.6 libz.so.1; do \
+  docker run --rm -v "$PWD":/src galaxy-choya-aarch64 cp -L /usr/lib/aarch64-linux-gnu/$l /src/out/libs.aarch64/; done
+python3 scripts/package_portmaster.py --binary build/aarch64/app/native/app/Petari --libs out/libs.aarch64 \
+  --out out/portmaster
 ```
 
-En la PC con Windows 11: lo mismo desde WSL2 (Ubuntu) con Docker Desktop encendido. El paquete comprueba que el
-binario sea ELF aarch64 y lista las versiones de GLIBC que pide (`build-info.json`): compáralas con `ldd --version` en
-la consola.
+`build.sh aarch64 app` compila solo el ejecutable (sin pruebas), con el WebGPU nulo (sin Dawn), y `check_elf.py`
+comprueba arquitectura, cargador, `DT_NEEDED` (solo sistema base + las cuatro de `libs.aarch64/`) y que no pida una
+GLIBC mayor que 2.36 (`GALAXY_GLIBC_MAX`). En Windows 11: lo mismo desde WSL2 con Docker Desktop.
 
 ## Instalar (PortMaster)
 
@@ -103,7 +117,10 @@ SD1/ports/galaxy-choya/gamedata/RMGE01/ tu disco extraído (files/ y sys/)
 | `GALAXY_RENDERER` | `gx` (por defecto) o `direct` |
 | `GALAXY_DIRECT_SCENES` | escenas extra para `direct`, separadas por comas (sin validar) |
 | `GALAXY_DIRECT_FORCE` | `1`: `direct` en todas las escenas (solo para medir) |
+| `GALAXY_PRESENT` | `auto`, `sdl`, `fbdev` o `pbuffer` (ver arriba); `GALAXY_PRESENT_PROBE=x,y;…` para pruebas |
 | `GALAXY_GX` (compilación) | `ON` para compilar la fase 1 con Aurora |
+| `GALAXY_WEBGPU_NULO` (compilación) | `ON`: WebGPU nulo de Choya en vez de Dawn (obligatorio en `aarch64 app`) |
+| `PETARI_GFX_BACKEND` | sin Choya, backend de Dawn de referencia en la PC: `auto`, `vulkan`, `opengl` |
 
 También se respetan las de MacioGalaxy (`PETARI_*`) y las del motor de Choya (`CHOYA_*`, p. ej. `CHOYA_PAQUETE`).
 

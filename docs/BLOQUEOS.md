@@ -18,23 +18,35 @@ Cada uno con archivo, función, causa y siguiente acción. Ninguno se "resolvió
   vértice, dibujo no indexado, textura RGB565 subida por el gancho, canal iluminado (ambiente de registro × material
   del vértice), copia del EFB a textura reutilizada en el mismo cuadro, borrado del EFB y copia a pantalla. Ningún
   dibujo omitido.
-- **Aproximaciones que quedan (contadas en `galaxy_choya::stats()` y registradas una vez en el log):** niebla con
-  ajuste por rango (sin ajuste), texgens de relieve (bump), polygon offset, dibujos de líneas/puntos (el núcleo los
-  omite), `TextureCopy` y tareas de codificador de Aurora, texturas BC1 y R16Sint (índices de paleta) que el núcleo
-  no recibe aún. Sin probar con datos reales: luces de verdad (direccionales/puntuales), niebla, matrices indirectas
-  y conversiones de paleta.
-- **Siguiente acción:** con disco propio, volcar cuadros reales (`GALAXY_BRIDGE_DEBUG=1` registra la TEV de cada
-  pipeline) y comparar contra la salida de Dawn en la PC; después, en la RG35XX H.
+- **Auditoría (fase 5, 2026-11-17).** Qué llega al núcleo y qué no, sin disco para medir cuánto lo usa Galaxy:
+  | Operación | Estado | Motivo / diagnóstico |
+  | --- | --- | --- |
+  | CMPR (texturas comprimidas del disco) | **cubierta** | Aurora siempre la decodifica a RGBA8 (`BuildRGBA8FromCMPR`); llega al núcleo como RGBA8 |
+  | BC1 directo (`GX_TF_BC1_PC`) | no se envía (contado) | solo aparece con paquetes de reemplazo de Aurora para PC, que el port no usa; con `assets.wlpk` las texturas van en ETC2 |
+  | Índices de paleta R16Sint | no se envían (contado) | las paletas estáticas Aurora las convierte a RGBA en la CPU; las de copias del EFB van por `PaletteConv` del núcleo (cubierto) |
+  | Copia textura → textura (`TextureCopy`) | omitida, contada y registrada | el núcleo no la tiene; sin disco no se sabe si Galaxy la usa |
+  | Tareas de codificador (`EncoderTask`) | omitidas, contadas | registradas por Aurora/MacioGalaxy para su propio trabajo WebGPU |
+  | Dibujos personalizados / ImGui | omitidos, contados | menús nativos de MacioGalaxy: ver B12 |
+  | Líneas y puntos | contados (`lineDraws`); el núcleo no los dibuja | pendiente de saber si Galaxy los usa fuera de depuración |
+  | Polygon offset | contado; el núcleo no lo aplica | puede dar z-fighting en calcomanías; medir con disco |
+  | Niebla con ajuste por rango | contada; se dibuja sin el ajuste | la niebla normal sí se traduce |
+  Todo lo omitido se cuenta en `galaxy_choya::stats()` y se escribe una vez en `log.txt`: nada se pierde en silencio.
+- **Siguiente acción:** con disco propio, `GALAXY_BRIDGE_DEBUG=1` y los contadores del log en una escena completa
+  (p. ej. Observatorio): implementar primero lo que aparezca con contador distinto de cero.
 
-## B2 — WebGPU nulo para la Aurora única
+## B2 — WebGPU nulo para la Aurora única: hecho y probado en PC; falta el sha256 del paquete aarch64
 
-- **Archivo:** `work/choya/choya/data/aurora/sin_dawn/include/{webgpu,dawn}/*`, `webgpu_nulo.cpp`.
-- **Causa:** las cabeceras son de la versión de Dawn de aurora-main; Aurora `08122911` pide Dawn `v20260807.225922`
-  (API distinta). En la PC se usa el paquete precompilado de Dawn (solo referencia); en la consola no hay Dawn.
-- **Siguiente acción:** regenerar el nulo con `scripts/generar-webgpu-nulo.py` de Choya a partir de las cabeceras
-  del paquete `dawn-linux-aarch64.tar.gz` de esa versión y enlazarlo en lugar de `dawn::webgpu_dawn` con
-  `AURORA_DAWN_PROVIDER=system` apuntando al nulo. Las lecturas del EFB y `GXDrawDone` no pueden ir al nulo: los
-  atiende el núcleo de Choya (B1/B7).
+- **Hecho:** `nulo/` genera el WebGPU nulo de Choya (`webgpu_nulo.cpp` del commit fijado + el resto generado con su
+  `generar-webgpu-nulo.py`) contra las cabeceras de Dawn `v20260807.225922` (la versión que pide Aurora 08122911) y lo
+  da como `dawn::webgpu_dawn` (`AURORA_DAWN_PROVIDER=system`, parche 0009 de MacioGalaxy, `GALAXY_WEBGPU_NULO=ON`).
+  Lo único de `dawn::native` que usa Aurora (el constructor de `DawnInstanceDescriptor`) está en
+  `nulo/dawn_native_nulo.cpp`. `build.sh aarch64 app` lo usa siempre: el binario de la consola no lleva Dawn.
+- **Comprobado (PC):** las pruebas `galaxy_bridge_gx`, `galaxy_host_gx_pbuffer` y `galaxy_pack_gx` pasan con el nulo
+  en lugar de Dawn (`build/host/macio-nulo`).
+- **Lecturas del EFB:** no las da el nulo (devolvería ceros): las atiende el núcleo de Choya (B7, resuelto en la ruta GX).
+- **Pendiente:** las cabeceras se extrajeron aquí del paquete x86-64 ya descargado (hash del árbol en `lock.json`).
+  En el contenedor, `fetch_deps.py --dawn-headers` descarga el paquete aarch64; su `sha256` hay que fijarlo en
+  `deps/lock.json` la primera vez (aquí no hay red para calcularlo).
 
 ## B3 — Shell de la app de macOS (resuelto en la PC; queda la presentación de la consola)
 
@@ -47,13 +59,14 @@ Cada uno con archivo, función, causa y siguiente acción. Ninguno se "resolvió
 - **Queda:** en la consola no hay Dawn ni Metal: la presentación tiene que ser la del núcleo de Choya (B1, B2, B4).
   Sin disco no se puede pasar del arranque (B9).
 
-## B4 — Ventana/contexto en la consola
+## B4 — Ventana/contexto en la consola: implementado (sdl / fbdev); sin probar en la RG35XX H
 
-- **Causa:** la consola no tiene X11/Wayland; SDL3 debe usar KMSDRM y la libGLES de Mali del firmware. No hay
-  consola en este entorno para comprobar que SDL3 abre KMSDRM con el blob de Mali de KNULLI/muOS.
-- **Siguiente acción:** en la consola, `SDL_VIDEO_DRIVER=kmsdrm` y anotar en `log.txt` `SDL_GetCurrentVideoDriver()`
-  y `GL_RENDERER`; si SDL3 no sirve, usar la pantalla EGL/GBM propia de Choya (`choya_gles.cpp`), que ya funciona en
-  KNULLI con Wii Sports (según el historial de Choya), y dejar SDL3 solo para entrada y audio.
+- **Hecho:** `choya_bridge/galaxy_choya_host.cpp`. Con DRM: SDL3 KMSDRM con EGL/GBM sobre la ventana de Aurora
+  (`SDL_WINDOW_OPENGL`). Sin DRM (Mali de fbdev): EGL directo sobre `/dev/fb0` como `choya_gles.cpp` de Choya, con SDL
+  en `offscreen` solo para mando y audio. El lanzador elige según `/dev/dri` (o `conf/present.txt`) y lo escribe en
+  `log.txt` junto con la glibc.
+- **Sin comprobar:** qué pila tiene el firmware real (KNULLI con blob de fbdev o Panfrost con DRM) y si SDL3 KMSDRM
+  convive con el EGL del firmware. Ver docs/PRUEBA_CONSOLA.md.
 
 ## B5 — Recursos de Galaxy en el conversor de Choya
 
@@ -66,18 +79,21 @@ Cada uno con archivo, función, causa y siguiente acción. Ninguno se "resolvió
 
 ## B6 — Mezcla GX + directa dentro del mismo cuadro
 
-- **Causa:** el puente GX (B1) abre y cierra la captura del cuadro dentro de `capture_packet` (un solo
-  `capture_begin`/`capture_end` por `FramePacket`). La ruta directa tendría que insertar sus dibujos en ese mismo
-  intervalo y respetar el orden de los pases de Aurora; falta definir ese punto de inserción.
-- **Acción actual:** selección por escena (`renderer_for_scene`), nunca mezcla.
+- **Decisión:** no se mezclan. El selector decide por escena completa al cambiar de etapa (parche 0008) y lo registra;
+  una escena va entera por un backend. El puente abre y cierra la captura por `FramePacket`; la ruta directa tendría
+  que insertar sus dibujos en ese intervalo respetando los pases de Aurora (no implementado).
 
-## B7 — Sincronía y lecturas del EFB en la ruta directa
+## B7 — Sincronía y lecturas del EFB
 
-- **Causa:** `GXDrawDone`, `GXSetDrawSync` y `GXPeek*` los resuelve hoy el puente GX de MacioGalaxy (`sync_bridge`,
-  `efb_peek`). La ruta directa no los emite.
-- **Siguiente acción:** exponer en el núcleo una espera de "cuadro dibujado" (`draw_frame` terminado) y lecturas de
-  color/profundidad desde el EFB de GLES, y conectarlas a `sync_backend` de MacioGalaxy antes de habilitar direct en
-  escenas que las usen.
+- **Ruta GX (hecho, probado en PC):** `GXDrawDone`, tokens y `GXSetDrawSync` siguen en `sync_bridge` de MacioGalaxy
+  (orden del FIFO en la CPU, no dependen de la GPU). Las lecturas `GXPeekZ`/`GXPeekARGB` a la hora del token ya no las
+  da Dawn nulo (habría dado ceros): `capture_segment` entrega al núcleo lo grabado hasta el token con copias Z24X8 y
+  RGBA8, el hilo de pantalla las lee y llama a `ready(ticket)`; si el núcleo no devuelve las copias, el proceso aborta
+  en vez de entregar un token con datos inventados. `galaxy_host_gx` comprueba que la instantánea ve el estado del
+  token (no el final del cuadro).
+- **Aproximación:** la copia de color se muestrea con el filtro de la copia del EFB del núcleo cuando el render de
+  Aurora es más grande que el EFB lógico (Dawn tomaba el texel más cercano); igual con escala 1.
+- **Ruta directa:** no emite tokens ni lecturas; por eso solo se habilitaría por escena (B6/B11).
 
 ## B8 — Geometría estática residente en la GPU
 
@@ -99,3 +115,28 @@ Cada uno con archivo, función, causa y siguiente acción. Ninguno se "resolvió
   (`GLIBC_2.3x not found` en `log.txt`).
 - **Siguiente acción:** comparar `build-info.json` (que lista las versiones GLIBC pedidas) con `ldd --version` en la
   consola; si hace falta, cambiar la imagen base a una con glibc más vieja (libc++ ya va estática).
+
+## B11 — Ruta directa en el ejecutable
+
+- **Comprobado:** antes, ni el selector ni `convert_shape` ni las bibliotecas directas estaban en `Petari`. Ahora el
+  selector se aplica desde el juego (`SceneControlInfo::setStage`, parche 0008) y registra el backend efectivo.
+- **Pendiente:** conversión y caché de `J3DShape` al cargar el modelo (`convert_shape`, con el contrato de orden de
+  bytes corregido en la fase 3), materiales/texturas/matrices desde `J3DMaterial` y `J3DShapeMtx`, invalidación al
+  descargar la escena, y la inserción de los dibujos en la captura (B6). Hasta entonces una escena pedida como
+  `direct` sigue entera por GX y el log dice por qué. La lista de escenas validadas sigue vacía.
+
+## B12 — Menús ImGui de MacioGalaxy con Choya
+
+- **Causa:** con Choya presentando, Aurora ya no crea su `SDL_Renderer` (tomaría la superficie GL de la ventana o el
+  KMS de la consola) e ImGui dibuja por WebGPU nulo: los menús nativos de MacioGalaxy (inicio, editor) no se ven. El
+  juego no depende de ellos.
+- **Siguiente acción:** pasar las listas de dibujo de ImGui al núcleo (un pase propio al final del cuadro) si hacen
+  falta en la consola.
+
+## B13 — Bibliotecas que pide el ejecutable
+
+- **Comprobado en PC (`check_elf.py`):** además del sistema base, `libsqlite3`, `libpng16`, `libfreetype`, `libz` (y
+  `libstdc++` solo por el Dawn de la PC; el nulo no la pide). En la consola van en `libs.aarch64/` del port, copiadas
+  del sysroot Debian 12 arm64 (glibc 2.36); `check_elf.py` las acepta solo con `--allow`.
+- **Sin comprobar:** el binario aarch64 real (no se compiló aquí) ni si el firmware ya trae esas bibliotecas.
+
