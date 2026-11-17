@@ -16,14 +16,22 @@
 
 namespace galaxy::direct {
 
+// Orden de bytes de un arreglo indexado. Los datos DIRECTOS van dentro de la lista GX y son siempre big endian (la
+// lista no se convierte al cargar). Los arreglos indexados dependen de quién los dio:
+//  - Native: los de J3D en MacioGalaxy (J3DModelLoader los pasa al orden del host al cargar y J3DShape los publica
+//    con GXSetArray(..., true)); su tamaño exacto está en J3DVertexData::mNativeArrayBytes.
+//  - BigEndian: los que llegan tal como están en el disco (GXSetArray sin conversión).
+enum class ArrayOrder : uint8_t { BigEndian, Native };
+
 struct GxAttrSource {
   uint8_t type = 0;          // GX_NONE, GX_DIRECT, GX_INDEX8, GX_INDEX16
   uint8_t cnt = 0;           // GXCompCnt (GX_POS_XY/XYZ, GX_NRM_XYZ, GX_CLR_RGB/RGBA, GX_TEX_S/ST)
   uint8_t compType = 0;      // GXCompType
   uint8_t frac = 0;          // bits fraccionarios de los enteros
-  const uint8_t* array = nullptr;  // GXSetArray (big endian, como en el disco)
+  const uint8_t* array = nullptr;  // GXSetArray (solo atributos indexados)
   uint32_t stride = 0;
-  size_t arrayBytes = 0;     // para comprobar límites (0 = sin comprobar)
+  size_t arrayBytes = 0;     // tamaño del arreglo: obligatorio en los indexados (0 = se rechaza)
+  ArrayOrder order = ArrayOrder::BigEndian;  // orden de los componentes del arreglo (no de los datos directos)
 };
 
 struct GxVertexSpec {

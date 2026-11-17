@@ -111,6 +111,16 @@ function(galaxy_add_direct_j3d)
         if(TARGET aurora_gx)
             target_link_libraries(galaxy_direct_j3d PRIVATE aurora::gx)
         endif()
+        if(BUILD_TESTING)
+            # J3DVertexData real (su constructor) con arreglos nativos y tamaños de mNativeArrayBytes.
+            add_executable(galaxy_j3d_bridge_test "${GALAXY_ROOT}/tests/j3d_bridge_test.cpp"
+                "${CMAKE_SOURCE_DIR}/src/JSystem/J3DGraphBase/J3DVertex.cpp")
+            target_link_libraries(galaxy_j3d_bridge_test PRIVATE galaxy_direct_j3d)
+            # Solo hace falta el constructor de J3DVertexData: el resto de J3DVertex.cpp (que usa j3dSys) se descarta.
+            target_compile_options(galaxy_j3d_bridge_test PRIVATE -ffunction-sections -fdata-sections)
+            target_link_options(galaxy_j3d_bridge_test PRIVATE -Wl,--gc-sections)
+            add_test(NAME galaxy_j3d_bridge COMMAND galaxy_j3d_bridge_test)
+        endif()
     endif()
 endfunction()
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL galaxy_add_direct_j3d)

@@ -46,18 +46,35 @@ const void* array_of(const J3DVertexData& vd, GXAttr attr) {
   }
 }
 
+// Ranura de J3DVertexData::mNativeArrayBytes: posición, normal, NBT, dos colores, ocho coordenadas de textura.
+int native_slot(GXAttr attr) {
+  switch (attr) {
+  case GX_VA_POS: return 0;
+  case GX_VA_NRM: return 1;
+  case GX_VA_CLR0: return 3;
+  case GX_VA_CLR1: return 4;
+  default:
+    if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) return 5 + (attr - GX_VA_TEX0);
+    return -1;
+  }
+}
+
 } // namespace
 
 bool describe_shape(J3DShape& shape, const J3DVertexData& vd, GxVertexSpec& spec, std::string* reason) {
+  if (shape.getNBTFlag()) {
+    spec = GxVertexSpec{};
+    if (reason) *reason = "forma con normales NBT: ruta GX";
+    return false;
+  }
+  return describe_vertex(shape.getVtxDesc(), vd, spec, reason);
+}
+
+bool describe_vertex(const GXVtxDescList* desc, const J3DVertexData& vd, GxVertexSpec& spec, std::string* reason) {
   spec = GxVertexSpec{};
-  const GXVtxDescList* desc = shape.getVtxDesc();
   const GXVtxAttrFmtList* fmt = vd.getVtxAttrFmtList();
   if (desc == nullptr || fmt == nullptr) {
     if (reason) *reason = "forma sin descriptor o formato de vértice";
-    return false;
-  }
-  if (shape.getNBTFlag()) {
-    if (reason) *reason = "forma con normales NBT: ruta GX";
     return false;
   }
   for (const GXVtxDescList* d = desc; d->attr != GX_VA_NULL; ++d) {
@@ -78,11 +95,19 @@ bool describe_shape(J3DShape& shape, const J3DVertexData& vd, GxVertexSpec& spec
     a.compType = static_cast<uint8_t>(f->type);
     a.frac = f->frac;
     if (d->type == GX_INDEX8 || d->type == GX_INDEX16) {
+      // MacioGalaxy convierte los arreglos de VTX1 al orden del host al cargar (J3DModelLoader) y los publica con
+      // GXSetArray(..., true): se leen en orden nativo, con su tamaño exacto. La lista y sus datos directos siguen
+      // en big endian.
       a.array = static_cast<const uint8_t*>(array_of(vd, d->attr));
       a.stride = array_stride(d->attr, f->cnt, f->type);
-      if (d->attr == GX_VA_POS) a.arrayBytes = static_cast<size_t>(vd.getVtxNum()) * a.stride;
-      if (d->attr == GX_VA_NRM) a.arrayBytes = static_cast<size_t>(vd.getNrmNum()) * a.stride;
+      a.order = ArrayOrder::Native;
+      const int slot = native_slot(d->attr);
+      a.arrayBytes = slot >= 0 ? vd.mNativeArrayBytes[slot] : 0;
       if (d->attr == GX_VA_CLR0 || d->attr == GX_VA_CLR1) a.compType = GX_RGBA8;
+      if (a.array == nullptr || a.arrayBytes == 0) {
+        if (reason) *reason = "atributo indexado " + std::to_string(d->attr) + " sin arreglo nativo cargado";
+        return false;
+      }
     }
   }
   return true;

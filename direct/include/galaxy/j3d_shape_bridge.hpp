@@ -9,6 +9,7 @@
 
 class J3DShape;
 class J3DVertexData;
+struct _GXVtxDescList;
 
 namespace galaxy::direct {
 
@@ -21,6 +22,10 @@ struct ShapeConversion {
 // Describe los atributos de la forma a partir de su GXVtxDescList y del GXVtxAttrFmtList de sus datos de vértice.
 // vertexData: el de J3DModelData (getVertexData()), el mismo que la forma usa al dibujar por GX.
 bool describe_shape(J3DShape& shape, const J3DVertexData& vertexData, GxVertexSpec& spec, std::string* reason);
+// Lo mismo a partir del descriptor (para formas sin NBT): arreglos indexados en orden nativo con el tamaño exacto de
+// mNativeArrayBytes; los datos directos de la lista siguen en big endian.
+bool describe_vertex(const _GXVtxDescList* desc, const J3DVertexData& vertexData, GxVertexSpec& spec,
+                     std::string* reason);
 ShapeConversion convert_shape(J3DShape& shape, const J3DVertexData& vertexData);
 
 } // namespace galaxy::direct
