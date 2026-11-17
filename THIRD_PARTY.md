@@ -18,3 +18,7 @@ Las tablas BCSV que MacioGalaxy incrusta (`src/Game/System/*.bcsv`) vienen de su
 
 Este proyecto no está afiliado a Nintendo, a SMGCommunity/Petari ni a MacioGalaxy. Los problemas de este port no deben
 reportarse a esos proyectos.
+
+`choya_bridge/` es código nuevo de este repositorio (MIT). No copia el adaptador de Choya: compila
+`choya_gx_core.cpp` directamente desde `work/choya` (commit fijado) y engancha Aurora generando copias parcheadas de
+sus fuentes en el directorio de compilación; los originales de `third_party/` y `work/aurora` no se tocan.

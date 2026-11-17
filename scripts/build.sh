@@ -39,9 +39,16 @@ if [ "$GALAXY_GX" = ON ]; then
     -DFETCHCONTENT_SOURCE_DIR_ABSEIL-CPP=$E/abseil-cpp -DFETCHCONTENT_SOURCE_DIR_XXHASH=$E/xxhash \
     -DFETCHCONTENT_SOURCE_DIR_FMT=$E/fmt -DFETCHCONTENT_SOURCE_DIR_IMGUI=$E/imgui -DFETCHCONTENT_SOURCE_DIR_TRACY=$E/tracy \
     -DFETCHCONTENT_SOURCE_DIR_SDL=$E/SDL -DFETCHCONTENT_SOURCE_DIR_ZSTD=$E/zstd \
-    -DSDL_UNIX_CONSOLE_BUILD=ON -DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_PIPEWIRE=OFF -DSDL_PULSEAUDIO=OFF -DSDL_JACK=OFF \
-    -DSDL_SNDIO=OFF"
-  [ "$TARGET" = aarch64 ] && GX_ARGS="$GX_ARGS -DSDL_KMSDRM=ON -DSDL_ALSA=ON"
+    -DSDL_WAYLAND=OFF -DSDL_PIPEWIRE=OFF -DSDL_PULSEAUDIO=OFF -DSDL_JACK=OFF -DSDL_SNDIO=OFF"
+  if [ "$TARGET" = aarch64 ]; then
+    # Consola: KMS/DRM + ALSA, sin servidor gráfico.
+    GX_ARGS="$GX_ARGS -DSDL_UNIX_CONSOLE_BUILD=ON -DSDL_X11=OFF -DSDL_KMSDRM=ON -DSDL_ALSA=ON -DGALAXY_CHOYA_BRIDGE=ON"
+  else
+    # PC: X11 mínimo, solo para que la prueba del puente cree su ventana bajo xvfb-run.
+    GX_ARGS="$GX_ARGS -DSDL_UNIX_CONSOLE_BUILD=OFF -DSDL_X11=ON -DSDL_X11_XCURSOR=OFF -DSDL_X11_XDBE=OFF \
+      -DSDL_X11_XFIXES=OFF -DSDL_X11_XINPUT=OFF -DSDL_X11_XRANDR=OFF -DSDL_X11_XSCRNSAVER=OFF -DSDL_X11_XSHAPE=OFF \
+      -DSDL_X11_XSYNC=OFF -DSDL_X11_XTEST=OFF -DGALAXY_CHOYA_BRIDGE=ON"
+  fi
 fi
 # shellcheck disable=SC2086
 cmake -S "$ROOT/work/MacioGalaxy" -B "$B/macio" -G Ninja $TOOLCHAIN_ARGS $GX_ARGS \
@@ -49,7 +56,11 @@ cmake -S "$ROOT/work/MacioGalaxy" -B "$B/macio" -G Ninja $TOOLCHAIN_ARGS $GX_ARG
   -DCMAKE_PROJECT_PetariNative_INCLUDE="$ROOT/cmake/linux_port.cmake" \
   -DGALAXY_LIBCXX_ROOT="$LIBCXX"
 cmake --build "$B/macio" -j "$JOBS"
-[ "$GALAXY_GX" = ON ] && cmake --build "$B/macio" -j "$JOBS" --target petari
+if [ "$GALAXY_GX" = ON ]; then
+  cmake --build "$B/macio" -j "$JOBS" --target petari
+  # Prueba del puente Aurora → Choya (solo PC: necesita Mesa con EGL sin superficie).
+  [ "$TARGET" = host ] && cmake --build "$B/macio" -j "$JOBS" --target galaxy_bridge_gx_test
+fi
 
 # Motor GLES de Choya, adaptador y API directa (independientes de Aurora).
 # shellcheck disable=SC2086

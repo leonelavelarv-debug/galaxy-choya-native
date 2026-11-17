@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <ucontext.h>
+#include <unwind.h>
 
 #include <algorithm>
 #include <atomic>
@@ -70,10 +71,101 @@ void captureRegs(arm_thread_state64_t& out, const ucontext_t* uc) {
   out.__pc = static_cast<uint64_t>(g[REG_RIP]);
   out.__fp = static_cast<uint64_t>(g[REG_RBP]);
   out.__sp = static_cast<uint64_t>(g[REG_RSP]);
-  out.__lr = 0;  // x86-64 no tiene registro de enlace; el recorrido usa [fp+8]
+  // x86-64 no tiene registro de enlace. Se entrega uno que apunta a la propia función, como el lr de una función
+  // AArch64 que ya llamó a otra: MacioGalaxy recorre pc, lr y luego la cadena de fp, y un lr nulo cortaría ahí la
+  // clasificación de marcos (la expropiación forzada no vería nunca el inicio del hilo).
+  out.__lr = out.__pc + 1;
 #else
 #error "arquitectura no soportada por la capa Darwin"
 #endif
+}
+
+// Rango ejecutable del binario principal: el muestreador de MacioGalaxy busca en la pila el primer marco suyo.
+std::uintptr_t gExeLow = 0, gExeHigh = 0;
+
+void findExeText() {
+  dl_iterate_phdr(
+      [](dl_phdr_info* info, size_t, void*) -> int {
+        for (int i = 0; i < info->dlpi_phnum; ++i) {
+          const auto& ph = info->dlpi_phdr[i];
+          if (ph.p_type == PT_LOAD && (ph.p_flags & PF_X) != 0) {
+            gExeLow = info->dlpi_addr + ph.p_vaddr;
+            gExeHigh = gExeLow + ph.p_memsz;
+          }
+        }
+        return 1;  // el primer objeto es el ejecutable
+      },
+      nullptr);
+}
+
+bool inExe(std::uintptr_t pc) { return pc >= gExeLow && pc < gExeHigh; }
+
+#if defined(__aarch64__)
+constexpr int kFpDwarfReg = 29;
+#else
+constexpr int kFpDwarfReg = 6;  // rbp
+#endif
+
+// Si el hilo se detuvo dentro de glibc (futex, nanosleep…), su fp no sirve para recorrer la pila: glibc no guarda
+// punteros de marco y en x86-64 no hay registro de enlace. Con el desenrollador de libgcc (CFI, entiende el marco
+// de señal) se busca el primer marco del ejecutable y se entrega como lr/fp, igual que lo vería el recorrido en
+// macOS, donde libsystem sí conserva punteros de marco. El bloqueo de dl_iterate_phdr es recursivo en glibc.
+struct UnwindScan {
+  std::uintptr_t pc;
+  std::uintptr_t stackLow;  // dirección de una variable del manejador: todo lo que se lee está por encima
+  bool pastSignal = false;
+  std::uintptr_t candIp = 0, candFp = 0;    // marco del ejecutable pendiente de comprobar
+  std::uintptr_t firstIp = 0, firstFp = 0;  // respaldo: el primer marco del ejecutable
+  std::uintptr_t ip = 0, fp = 0;
+};
+
+// El marco elegido debe dejar una cadena de punteros de marco coherente: [fp+8] (dirección de retorno en x86-64 y
+// en el registro de marco {x29, x30} de AArch64) tiene que ser la IP del llamador según la CFI. Así se saltan las
+// funciones de libc++ (enlazada estática, sin punteros de marco), que en macOS están fuera del ejecutable.
+bool chainOk(const UnwindScan& scan, std::uintptr_t fp, std::uintptr_t callerIp) {
+  if (fp <= scan.stackLow || fp - scan.stackLow > (std::uintptr_t{64} << 20) || (fp & 7) != 0) return false;
+  return *reinterpret_cast<const std::uintptr_t*>(fp + 8) == callerIp;
+}
+
+_Unwind_Reason_Code unwindStep(_Unwind_Context* ctx, void* arg) {
+  auto* scan = static_cast<UnwindScan*>(arg);
+  int before = 0;
+  const auto ip = static_cast<std::uintptr_t>(_Unwind_GetIPInfo(ctx, &before));
+  if (!scan->pastSignal) {
+    // Marcos del propio manejador hasta llegar al interrumpido (IP exacta = pc del contexto).
+    if (ip == scan->pc) scan->pastSignal = true;
+    return _URC_NO_REASON;
+  }
+  if (scan->candIp != 0 && chainOk(*scan, scan->candFp, ip)) {
+    scan->ip = scan->candIp;
+    scan->fp = scan->candFp;
+    return _URC_END_OF_STACK;
+  }
+  scan->candIp = 0;
+  if (inExe(ip)) {
+    scan->candIp = ip;
+    scan->candFp = static_cast<std::uintptr_t>(_Unwind_GetGR(ctx, kFpDwarfReg));
+    if (scan->firstIp == 0) {
+      scan->firstIp = scan->candIp;
+      scan->firstFp = scan->candFp;
+    }
+  }
+  return _URC_NO_REASON;
+}
+
+void recoverExeFrame(arm_thread_state64_t& regs) {
+  if (gExeHigh == 0 || inExe(regs.__pc)) return;
+  int here = 0;
+  UnwindScan scan{static_cast<std::uintptr_t>(regs.__pc), reinterpret_cast<std::uintptr_t>(&here)};
+  _Unwind_Backtrace(unwindStep, &scan);
+  if (scan.ip == 0) {
+    scan.ip = scan.firstIp;
+    scan.fp = scan.firstFp;
+  }
+  if (scan.ip != 0) {
+    regs.__lr = scan.ip;
+    regs.__fp = scan.fp;
+  }
 }
 
 void onSuspendSignal(int, siginfo_t*, void* ctx) {
@@ -82,6 +174,7 @@ void onSuspendSignal(int, siginfo_t*, void* ctx) {
   Slot* s = findSlot(self);
   if (s != nullptr) {
     captureRegs(s->regs, static_cast<const ucontext_t*>(ctx));
+    recoverExeFrame(s->regs);
     s->haveRegs.store(true, std::memory_order_release);
     sem_post(&s->stopped);
     while (sem_wait(&s->resume) != 0 && errno == EINTR) {
@@ -92,6 +185,7 @@ void onSuspendSignal(int, siginfo_t*, void* ctx) {
 
 void installSignal() {
   std::call_once(gSignalOnce, [] {
+    findExeText();
     for (auto& s : gSlots) {
       sem_init(&s.stopped, 0, 0);
       sem_init(&s.resume, 0, 0);

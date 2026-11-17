@@ -39,6 +39,25 @@ renderizador: llama a `capture_begin/pass/draw/copy/end` igual que el puente de 
 - **Hilos:** el planificador de MacioGalaxy (testigo de CPU). El hilo GX de Choya (`choya_hilo.cpp`) **no** se
   activa todavía: primero ejecución gráfica ordenada (requisito), después se valida la propiedad de los datos.
 
+## Puente Aurora → Choya (fase 1)
+
+El adaptador original de Choya (`choya_gx.cpp`) supone la Aurora de BrawlRecompiled (`lib/gfx/common.cpp`, otro
+`ShaderConfig`, uniformes en otro orden). Para la Aurora única se escribió uno nuevo en `choya_bridge/`:
+
+| Gancho (anclas obligatorias en `patch_aurora_bridge.py`) | Qué hace |
+| --- | --- |
+| `frame.cpp`: al tomar `recorded.packet` | `capture_packet`: recorre `FramePacket::ops` (pases, viewport/scissor, dibujos GX y borrados, conversiones de paleta, copias) y lo entrega al núcleo entre `capture_begin`/`capture_end` |
+| `recording.cpp`: `pipeline_ref` GX y de borrado | registra el pipeline traducido (`PipelineConfig` → `PipelineDesc`, `ext.valid=1`) y su disposición de uniformes |
+| `command_processor.cpp`: tras `build_bind_groups` | registra qué texturas usa cada grupo de enlace |
+| `texture.cpp`: subidas y `make_shared<TextureRef>` | envía los niveles al núcleo (RGBA8 directo, R8/RG8 expandidas) y sigue la liberación |
+| `GXFrameBuffer.cpp`: `GXCopyDisp`/`GXCopyTex` | marca la textura de pantalla y las copias del EFB |
+
+Uniformes por dibujo, alineados a 256 bytes: cabecera del núcleo (80 bytes: `vtx_start`, matriz actual, tamaño del
+viewport, comienzos de arreglos) + el bloque de Aurora tal cual (orden de `fill_uniform`) + niebla e indirectas
+convertidas al formato del núcleo. Los desplazamientos que necesita el sombreador del núcleo se calculan con la
+misma secuencia que `fill_uniform`. El puente no inventa éxito: lo que no traduce se cuenta en `stats()` y se
+registra.
+
 ## Convivencia de los backends
 
 Regla actual: **un backend por escena**, elegido al cambiar de escena (`galaxy::renderer_for_scene`). Nunca se
@@ -54,8 +73,8 @@ mezclan en el mismo cuadro, así que no comparten estado GL a mitad de cuadro. L
 | Sincronización | `GXDrawDone`/`GXSetDrawSync` siguen en el puente GX (sync_bridge de MacioGalaxy); la ruta directa no los emite y por eso solo se habilita en escenas donde ningún dibujo directo depende de ellos (B7) |
 
 Mezclar dentro del mismo cuadro (p. ej. escenario por directa y partículas por GX) requiere que el puente GX y la
-ruta directa escriban en la **misma** captura del cuadro; está diseñado (los dos usan `capture_*`), pero no
-implementado (B6).
+ruta directa escriban en la **misma** captura del cuadro; el puente ya abre y cierra esa captura por
+`FramePacket`, pero el punto de inserción de la ruta directa no está implementado (B6).
 
 ## Ruta directa: qué es persistente
 

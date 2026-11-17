@@ -1,6 +1,7 @@
 # Componentes migrados y componentes que siguen por GX
 
-Estado al 2026-11-16. "Implementado" = código en el repositorio, compilado y con prueba. "Validado" = comparado con
+Estado al 2026-11-17. La columna "Ruta GX" pasa por el puente `choya_bridge/` (Aurora 08122911 → núcleo de Choya),
+probado en PC con Mesa; sus aproximaciones están en BLOQUEOS.md (B1). "Implementado" = código en el repositorio, compilado y con prueba. "Validado" = comparado con
 la ruta GX en la RG35XX H con el juego (ninguno todavía).
 
 | Componente gráfico | Ruta GX (fase 1) | Ruta directa (fase 2) | Validado en consola |

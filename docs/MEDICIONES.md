@@ -14,13 +14,20 @@ de la consola y no se usan para prometer FPS.
 | Aurora `08122911` + parches de MacioGalaxy, SDL3, Dear ImGui, Tracy, zstd (`GALAXY_GX=ON`) | compila |
 | App `Petari` completa (juego + Aurora + SDL3 + Dawn de referencia), tras el parche 0005 | **enlaza** (ELF x86-64, 38 MB) y arranca hasta pedir el disco (sin datos aquí) |
 
-## Pruebas de MacioGalaxy en Linux (`ctest -LE "timing|slow"`)
+## Pruebas de MacioGalaxy en Linux (`ctest -j1`)
 
-59 de 59 pasan, entre ellas: núcleo (matemáticas, Nerve, RNG), memoria y heaps, archivos JKR, recursos J3D/KCL/JPA,
+65 de 65 pasan en serie (2026-11-17, 202 s), entre ellas: núcleo (matemáticas, Nerve, RNG), memoria y heaps, archivos JKR, recursos J3D/KCL/JPA,
 mensajes, NAND (con atributos en xattr o archivo lateral), DVD, OS (planificador con testigo de CPU, preempción,
-alarmas), VI, audio (DSP/AI), sincronía GX, fallos (informe con registros), entrada, editor. La prueba lenta
-`native_array_index_audit` (150 s) también pasa. Las de etiqueta `timing` no se ejecutaron (necesitan una máquina
-quieta; esta es virtual y compartida).
+alarmas), VI, audio (DSP/AI), sincronía GX, fallos (informe con registros), entrada, editor. Con `ctest -j2` en esta máquina de 2 núcleos fallan de forma
+intermitente tres pruebas de tiempos (`native_platform_os`, `native_platform_gx_sync`, `native_audio_pacing`) y pasan
+al repetirlas solas: miden plazos de planificación y no toleran la carga de otra prueba en paralelo.
+
+Para que el diagnóstico del testigo de CPU nombre el sitio en el ejecutable cuando el hilo espera dentro de glibc
+(futex, nanosleep), la capa Darwin desenrolla con la CFI de libgcc desde la señal de suspensión hasta el primer
+marco del ejecutable con cadena de punteros de marco coherente (en macOS esto sale solo: libsystem conserva los
+punteros de marco). En x86-64, sin registro de enlace, `lr` apunta a la propia función. El parche 0006 adapta dos
+expectativas propias de macOS (nombre `__psynch_mutexwait`; "más rápido que dladdr", cuando en Linux dladdr ya es
+la búsqueda en la `.symtab`).
 
 Las pruebas que necesitan el disco (`--assets build/game-data/RMGE01/files`) no se registran sin datos: **no se
 ejecutaron**.
@@ -29,6 +36,25 @@ ejecutaron**.
 
 `choya_motor_harness` (la prueba original de Choya) compilado contra `GXEnum.h` de Aurora `08122911`: **PRUEBA OK**
 (colores, copias del EFB, invalidaciones, volcado y redibujo del cuadro).
+
+## Puente Aurora 08122911 → Choya (`galaxy_bridge_gx`)
+
+API GX real (`GXInit`, `GXBegin`…, `GXCopyTex`, `GXCopyDisp`) → FIFO → Aurora con los parches de MacioGalaxy y el
+backend **nulo** de Dawn → puente → núcleo GLES de Choya en Mesa llvmpipe (EGL sin superficie, GLES 3.2), bajo
+`xvfb-run` porque Aurora abre una ventana SDL. 4 cuadros de 640×480; se leen píxeles de los cuadros 2 y 3:
+
+| Caso | Esperado | Leído |
+| --- | --- | --- |
+| Cuadrado con color por vértice (`GX_QUADS`, índices de Aurora) | `ff0000` | `ff0000` |
+| Triángulo no indexado (`GX_TRIANGLES`, `indexCount=0`, índices generados por el puente) | `00ff00` | `00ff00` |
+| Textura RGB565 8×8 subida por el gancho de `texture.cpp` (TEV `GX_REPLACE`) | `ffff00` | `ffff00` |
+| Canal iluminado: ambiente de registro verde × material blanco del vértice, sin luces | `00ff00` | `00ff00` |
+| Copia del EFB a textura (`GXCopyTex`) muestreada en el mismo cuadro | `ff0000` | `ff0000` |
+| Fondo (borrado del EFB + copia a pantalla) | `0000ff` | `0000ff` (cuadro 0: negro, calentamiento de pipelines) |
+
+Contadores: `cuadros=4 pases=12 dibujos_gx=20 indices_generados=4 copias_a_pantalla=4 texturas=1`,
+`omitidos(pipeline=0 uniformes=0 otros=0)`, 51 520 bytes de uniformes reempaquetados. **Es corrección en PC, no
+rendimiento**: no hay tiempos porque llvmpipe y el backend nulo de Dawn no dicen nada de la Mali-G31.
 
 ## Ruta directa (`galaxy_direct_mesa_test`)
 

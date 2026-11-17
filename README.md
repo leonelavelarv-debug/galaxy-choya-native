@@ -8,22 +8,35 @@ Port nativo de **Super Mario Galaxy** para la **Anbernic RG35XX H** (Linux aarch
   con una **API directa** que recibe la geometría y los materiales de J3D sin FIFO GX (fase 2).
 - No incluye datos del juego: necesitas tu propio disco (RMGE01) extraído.
 
-> **Estado honesto (2026-11-16):** hay base Linux reproducible, juego compilado en Linux, motor GLES y ruta directa
-> funcionando en pruebas con Mesa. **No es un port jugable todavía** y no se ha ejecutado en la RG35XX H. Ver
+> **Estado honesto (2026-11-17):** hay base Linux reproducible, juego compilado en Linux, motor GLES, ruta directa
+> y puente Aurora → Choya funcionando en pruebas con Mesa (PC). **No es un port jugable todavía** y no se ha ejecutado en la RG35XX H. Ver
 > [docs/BLOQUEOS.md](docs/BLOQUEOS.md) y [docs/MEDICIONES.md](docs/MEDICIONES.md).
 
 ## Hitos
 
 | Hito | Estado |
 | --- | --- |
-| A. Base Linux reproducible | **hecho en PC x86-64**: dependencias fijadas, 5 parches verificados, núcleo + servicios + 1641 archivos del juego compilan, 59/59 pruebas de MacioGalaxy pasan. aarch64: toolchain y contenedor listos, sin ejecutar aquí |
-| B. Modelo real con Choya (GX) | **app completa (juego + Aurora) enlaza en Linux x86-64 y arranca hasta pedir el disco**; falta el puente Aurora 08122911 → Choya (B1), el WebGPU nulo para la consola (B2) y un disco para probar |
+| A. Base Linux reproducible | **hecho en PC x86-64**: dependencias fijadas, 6 parches verificados, núcleo + servicios + 1641 archivos del juego compilan, 65/65 pruebas de MacioGalaxy pasan (en serie). aarch64: toolchain y contenedor listos, sin ejecutar aquí |
+| B. Modelo real con Choya (GX) | app completa (juego + Aurora) enlaza en Linux x86-64 y arranca hasta pedir el disco. **Puente Aurora 08122911 → Choya escrito** (`choya_bridge/`) y probado de extremo a extremo con la API GX real en Mesa (PC); quedan aproximaciones listadas en B1, el WebGPU nulo para la consola (B2) y un disco para probar con modelos reales |
 | C. Arranque e interacción | pendiente de B |
 | D. Escena jugable | pendiente |
 | E. Ciclo de vida completo | pendiente |
 | F. PortMaster y medición | lanzador, perfil de mando y empaquetador hechos; sin binario aarch64 ni medición en consola |
 | G. Ruta directa | **API implementada y probada** (0 píxeles distintos frente a la captura GX en Mesa), conversión de listas GX y puente J3D compilados, selector `GALAXY_RENDERER` |
 | H. Comparación | pendiente (necesita B y la consola) |
+
+## Puente Aurora → Choya (fase 1)
+
+Se activa en ejecución con `CHOYA_GLES=1` (el pack con `CHOYA_PAQUETE`); sin esa variable, Aurora dibuja como
+siempre. Prueba de extremo a extremo en la PC (necesita `xvfb-run` y Mesa con EGL sin superficie):
+
+```
+GALAXY_GX=ON scripts/build.sh host
+ctest --test-dir build/host/macio -R galaxy_bridge_gx --output-on-failure
+```
+
+`GALAXY_BRIDGE_DEBUG=1` registra la configuración TEV de cada pipeline traducido. Lo que el puente aproxima o no
+traduce se cuenta y se escribe una vez en el log: ver [docs/BLOQUEOS.md](docs/BLOQUEOS.md) (B1).
 
 ## Estructura
 

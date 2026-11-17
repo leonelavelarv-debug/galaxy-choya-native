@@ -2,24 +2,29 @@
 
 Cada uno con archivo, función, causa y siguiente acción. Ninguno se "resolvió" con un stub que devuelva éxito.
 
-## B1 — Puente Aurora 08122911 → núcleo de Choya (fase 1) sin escribir
+## B1 — Puente Aurora 08122911 → núcleo de Choya (fase 1): escrito y probado en PC; quedan aproximaciones
 
-- **Archivo:** `work/choya/choya/data/aurora/choya_gx.cpp` (`describe`, `capture_*`) y los parches de
-  `choya/retarget.py` (`AURORA_EDITS`, inserta la captura en `lib/gfx/common.cpp`).
-- **Causa:** están escritos para `aurora-main` de BrawlRecompiled. En la Aurora única (`08122911`) no existen
-  `lib/gfx/common.cpp`, `gx::tev_stage_texture_dependency`, `tev_effective_texcoord`, `tev_z_texture_*`, ni los campos
-  `dualTexEnabled/zFreeze/zTexture/numTexGens` de `ShaderConfig`; los uniformes siguen el orden de
-  `gx::build_shader_info` (upstream) y no el que espera el núcleo (`vtx_start`, matriz por omisión, comienzos de
-  arreglos en las palabras 0-33).
-- **Siguiente acción:** escribir `choya_bridge/aurora_upstream.cpp` que, al cerrar cada `FramePacket` (en
-  `gfx/render_worker.cpp`, antes de codificar para WebGPU), recorra `packet.ops`: `RenderPass` → `capture_pass` (con
-  `resolveTarget/resolveRect/resolveFormat`, `paletteConvs`), `Command::SetViewport/SetScissor`, y los `Draw` cuyo
-  `encoder == encode_draw<gx::render, gx::DrawData>` → `capture_draw`. Por dibujo: traducir `PipelineConfig` a
-  `PipelineDesc` (los campos que upstream tiene; `ext.valid=1`), y **reempaquetar** su bloque de uniformes al orden
-  del núcleo (calculando los desplazamientos de upstream con la misma secuencia de `build_shader_info`) más
-  `vtx_start`/comienzos de arreglos desde `vertRange` y `BindGroupRanges::vaRanges`. Lo que no se traduzca se cuenta y
-  se registra por material (nada se omite en silencio). Probar con volcados de cuadros reales (`CHOYA_GX_VOLCADO`)
-  cuando haya disco.
+- **Hecho:** `choya_bridge/` reemplaza al adaptador de Choya (`choya_gx.cpp`, escrito para la Aurora de
+  BrawlRecompiled). `patch_aurora_bridge.py` engancha la Aurora única en cinco puntos con anclas obligatorias (cada
+  una debe aparecer exactamente una vez o la compilación se detiene): cierre del `FramePacket` (`frame.cpp`), alta de
+  pipelines GX/borrado (`recording.cpp`), grupos de enlace (`command_processor.cpp`), subida y liberación de texturas
+  (`texture.cpp`) y copias del EFB/pantalla (`GXFrameBuffer.cpp`). `galaxy_choya_bridge.cpp` traduce
+  `PipelineConfig` → `PipelineDesc` y **reempaqueta** cada bloque de uniformes al orden del núcleo (cabecera de 80
+  bytes con `vtx_start`, matriz actual y comienzos de arreglos; desplazamientos calculados con la secuencia de
+  `fill_uniform`; niebla e indirectas convertidas al formato del núcleo). Los dibujos `GX_TRIANGLES` no indexados
+  (`indexCount=0`) reciben índices secuenciales generados.
+- **Comprobado (PC, Mesa llvmpipe, Dawn backend nulo; NO es la Mali):** `tests/bridge_gx_test.cpp` usa la API GX
+  real → FIFO → Aurora con todos los parches de MacioGalaxy → puente → núcleo GLES. Píxel exacto en: color por
+  vértice, dibujo no indexado, textura RGB565 subida por el gancho, canal iluminado (ambiente de registro × material
+  del vértice), copia del EFB a textura reutilizada en el mismo cuadro, borrado del EFB y copia a pantalla. Ningún
+  dibujo omitido.
+- **Aproximaciones que quedan (contadas en `galaxy_choya::stats()` y registradas una vez en el log):** niebla con
+  ajuste por rango (sin ajuste), texgens de relieve (bump), polygon offset, dibujos de líneas/puntos (el núcleo los
+  omite), `TextureCopy` y tareas de codificador de Aurora, texturas BC1 y R16Sint (índices de paleta) que el núcleo
+  no recibe aún. Sin probar con datos reales: luces de verdad (direccionales/puntuales), niebla, matrices indirectas
+  y conversiones de paleta.
+- **Siguiente acción:** con disco propio, volcar cuadros reales (`GALAXY_BRIDGE_DEBUG=1` registra la TEV de cada
+  pipeline) y comparar contra la salida de Dawn en la PC; después, en la RG35XX H.
 
 ## B2 — WebGPU nulo para la Aurora única
 
@@ -61,8 +66,9 @@ Cada uno con archivo, función, causa y siguiente acción. Ninguno se "resolvió
 
 ## B6 — Mezcla GX + directa dentro del mismo cuadro
 
-- **Causa:** el puente GX (B1) y la ruta directa necesitan escribir en la misma captura del cuadro (un solo
-  `capture_begin`). Hasta que B1 exista no se puede ordenar la mezcla.
+- **Causa:** el puente GX (B1) abre y cierra la captura del cuadro dentro de `capture_packet` (un solo
+  `capture_begin`/`capture_end` por `FramePacket`). La ruta directa tendría que insertar sus dibujos en ese mismo
+  intervalo y respetar el orden de los pases de Aurora; falta definir ese punto de inserción.
 - **Acción actual:** selección por escena (`renderer_for_scene`), nunca mezcla.
 
 ## B7 — Sincronía y lecturas del EFB en la ruta directa

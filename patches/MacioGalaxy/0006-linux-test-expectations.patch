@@ -1,0 +1,38 @@
+diff --git a/native/tests/platform_allocation_tests.cpp b/native/tests/platform_allocation_tests.cpp
+index 53bd78b..1175ddd 100644
+--- a/native/tests/platform_allocation_tests.cpp
++++ b/native/tests/platform_allocation_tests.cpp
+@@ -358,7 +358,13 @@ void testSymbolLookup() {
+     // dladdr cost ~0.1 ms per address. Bound the absolute cost per address.
+     check(timing.timed >= std::min<std::size_t>(1000, timing.symbols) && timing.fastMs / timing.timed < 0.02,
+           "first-seen addresses resolve in under 20 us each (10k in < 200 ms), demangling included");
++#if defined(__APPLE__)
+     check(timing.fastMs < timing.dladdrMs, "and faster than dladdr");
++#else
++    // Linux: dladdr ya es la búsqueda en la .symtab de la capa de compatibilidad (--wrap=dladdr), la misma clase
++    // de tabla; solo se exige no ser peor (margen para el ruido de medir unos milisegundos).
++    check(timing.fastMs < timing.dladdrMs * 1.5 + 0.5, "and no slower than the .symtab-backed dladdr");
++#endif
+     // The routing shapes classify as before through the table.
+     using PetariNative::CodeKind;
+     check(PetariNative::classifyCode(reinterpret_cast<std::uintptr_t>(&ZZTestStoreRange) + 5) == CodeKind::Host,
+diff --git a/native/tests/platform_os_tests.cpp b/native/tests/platform_os_tests.cpp
+index eb0bc11..76e9793 100644
+--- a/native/tests/platform_os_tests.cpp
++++ b/native/tests/platform_os_tests.cpp
+@@ -1006,7 +1006,15 @@ void testBatonMonitor() {
+     check(blocked.stretches >= before.stretches + 1, "a host wait while holding the CPU is counted");
+     check(blocked.maxMs >= 100.0, "with its length");
+     check(hasSite(blocked, "waitForHostLockHoldingCpu"), "and its site in the executable");
++#if defined(__APPLE__)
+     check(hasSite(blocked, "[waiting in __psynch_mutexwait"), "and the host primitive it waits in");
++#else
++    // Linux: la espera es el futex de glibc, cuya función interna no está en la tabla dinámica de libc (libc sin
++    // símbolos de depuración): se nombra por dirección. Se exige que se informe la primitiva, fuera del ejecutable.
++    check(hasSite(blocked, "[waiting in "), "and the host primitive it waits in");
++    check(!hasSite(blocked, "[waiting in (anonymous namespace)::waitForHostLockHoldingCpu"),
++          "and the primitive is the host wait, not the caller");
++#endif
+ 
+     const auto beforeReleased = settledBlockStats();
+     contend(250, [] {
