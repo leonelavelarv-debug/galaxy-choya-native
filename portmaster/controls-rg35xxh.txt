@@ -1,0 +1,21 @@
+# galaxy-choya-native: perfil de mando para la Anbernic RG35XX H (formato controls.txt de MacioGalaxy:
+# Accion=Entrada,Entrada; los nombres de botón son por posición en el diseño estándar de SDL).
+# Se copia a conf/controls.txt la primera vez; editarlo cambia los botones (o usa el menú Home → Controls).
+#
+# Stick izquierdo: movimiento (analógico, también inclinación en la Bola Estelar y la Mantarraya).
+# Stick derecho: puntero (R3 lo centra).
+A=Pad:South
+B=Pad:RightTrigger,Pad:East
+Shake=Pad:West,Pad:RightShoulder
+NunchukZ=Pad:LeftTrigger
+NunchukC=Pad:LeftShoulder
+Plus=Pad:Start
+Minus=Pad:Back
+Start=Pad:North
+Home=Pad:Guide
+DpadUp=Pad:DpadUp
+DpadDown=Pad:DpadDown
+DpadLeft=Pad:DpadLeft
+DpadRight=Pad:DpadRight
+# Sustituto de inclinación del mando (misiones de bola y mantarraya): mantener L3 y mover el stick izquierdo.
+TiltHold=Pad:LeftStick

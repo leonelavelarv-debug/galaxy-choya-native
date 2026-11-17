@@ -1,0 +1,2 @@
+# gptokeyb: no traduce botones (el juego lee el mando por SDL). Se usa solo para la salida limpia: el atajo de
+# PortMaster Select+Start termina "galaxy-choya" con SIGTERM, que el port atiende con el apagado normal del juego.

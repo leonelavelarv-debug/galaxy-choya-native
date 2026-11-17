@@ -1,0 +1,475 @@
+diff --git a/libs/RVL_SDK/include/revolution/types.h b/libs/RVL_SDK/include/revolution/types.h
+index ad30a37..86e550f 100644
+--- a/libs/RVL_SDK/include/revolution/types.h
++++ b/libs/RVL_SDK/include/revolution/types.h
+@@ -149,11 +149,17 @@ typedef int BOOL;
+ #if defined(PETARI_NATIVE) && defined(__cplusplus)
+ extern "C" {
+ #endif
++/* glibc's <math.h> also declares __fabs/__fabsf, as noexcept in C++: match it on Linux (galaxy-choya-native). */
++#if defined(PETARI_NATIVE) && defined(__cplusplus) && defined(__linux__)
++#define PETARI_INTRINSIC_NOEXCEPT noexcept
++#else
++#define PETARI_INTRINSIC_NOEXCEPT
++#endif
+ f32 __frsqrte(f32);
+ u32 __cntlzw(u32);
+ s32 __abs(s32);
+-f32 __fabsf(f32);
+-f64 __fabs(f64);
++f32 __fabsf(f32) PETARI_INTRINSIC_NOEXCEPT;
++f64 __fabs(f64) PETARI_INTRINSIC_NOEXCEPT;
+ void* __memcpy(void*, const void*, int);
+ #if defined(PETARI_NATIVE) && defined(__cplusplus)
+ }
+diff --git a/native/editor/level_api/ops.cpp b/native/editor/level_api/ops.cpp
+index 9ddc0f4..743393a 100644
+--- a/native/editor/level_api/ops.cpp
++++ b/native/editor/level_api/ops.cpp
+@@ -1199,7 +1199,7 @@ namespace {
+                 if (!opFromJson(model, op["edit"], &raw, &error))
+                     fail("bad-args", where + ".edit: " + error, "", {}, where + ".edit");
+                 for (const AddRow& add : raw.adds) {
+-                    impl.nextNew = std::max(impl.nextNew, (add.id.v & ~(3ull << 62)) + 1);
++                    impl.nextNew = std::max<std::uint64_t>(impl.nextNew, (add.id.v & ~(3ull << 62)) + 1);
+                     created.push_back(add.id);
+                 }
+                 apply(raw, where);
+diff --git a/native/include/petari/latency_probe.hpp b/native/include/petari/latency_probe.hpp
+index 4ae7062..53d0d36 100644
+--- a/native/include/petari/latency_probe.hpp
++++ b/native/include/petari/latency_probe.hpp
+@@ -32,7 +32,13 @@ inline bool enabled() {
+ }
+ 
+ inline std::uint64_t nowNs() {
++#if defined(__APPLE__)
+     return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
++#else
++    timespec ts{};
++    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
++    return static_cast<std::uint64_t>(ts.tv_sec) * 1000000000ull + static_cast<std::uint64_t>(ts.tv_nsec);
++#endif
+ }
+ 
+ // One press in flight at a time; a new press while one is in flight is ignored.
+diff --git a/native/memory/boot.cpp b/native/memory/boot.cpp
+index dac47e6..2d4a721 100644
+--- a/native/memory/boot.cpp
++++ b/native/memory/boot.cpp
+@@ -4,10 +4,13 @@
+ #include <revolution/sc.h>
+ #include <mutex>
+ #include <pthread.h>
++#if defined(__linux__)
++#include <galaxy_darwin_compat.h>  // pthread_main_np (galaxy-choya-native)
++#endif
+ 
+ extern "C" void OSInit() {
+     if (!pthread_main_np()) {
+-        OSPanic(__FILE__, __LINE__, "Native OSInit must run on the macOS main thread");
++        OSPanic(__FILE__, __LINE__, "Native OSInit must run on the process main thread");
+     }
+     static std::once_flag initialized;
+     PetariNative::HostAllocationScope hostAllocations;
+diff --git a/native/platform/nand/isfs_host.cpp b/native/platform/nand/isfs_host.cpp
+index 2e6d716..35739df 100644
+--- a/native/platform/nand/isfs_host.cpp
++++ b/native/platform/nand/isfs_host.cpp
+@@ -6,6 +6,7 @@
+ #include <unistd.h>
+ 
+ #include <cerrno>
++#include <cstdio>
+ #include <cstring>
+ #include <mutex>
+ #include <vector>
+@@ -102,17 +103,103 @@ void encode(const Attr& a, u8 out[12]) {
+     out[10] = out[11] = 0;
+ }
+ 
++#if defined(__APPLE__)
++bool writeRawAttr(const fs::path& path, const u8 raw[12]) {
++    return ::setxattr(path.c_str(), kAttrName, raw, 12, 0, XATTR_NOFOLLOW) == 0;
++}
++ssize_t readRawAttr(const fs::path& path, u8* raw, std::size_t size) {
++    return ::getxattr(path.c_str(), kAttrName, raw, size, 0, XATTR_NOFOLLOW);
++}
++void moveAttrSidecar(const fs::path&, const fs::path&) {}
++void removeAttrSidecar(const fs::path&) {}
++#else
++// Linux (galaxy-choya-native): xattr "user.petari.nand" where the file system has them (ext4). The SD cards of
++// KNULLI/muOS are often FAT32/exFAT, which have none: then the 12 bytes go to a sidecar file in a mirror tree next to
++// the NAND root (<parent>/.<root>-nandattr/<relative path>.attr), outside the tree the game lists.
++constexpr const char* kLinuxAttrName = "user.petari.nand";
++
++fs::path attrSidecar(const fs::path& path) {
++    const fs::path& root = state().root;
++    std::error_code ec;
++    const fs::path rel = fs::relative(path, root, ec);
++    fs::path base = root.parent_path() / ("." + root.filename().string() + "-nandattr");
++    if (ec || rel.empty() || rel == ".") {
++        return base / ".root.attr";
++    }
++    fs::path out = base / rel;
++    out += ".attr";
++    return out;
++}
++
++bool writeRawAttr(const fs::path& path, const u8 raw[12]) {
++    if (::lsetxattr(path.c_str(), kLinuxAttrName, raw, 12, 0) == 0) {
++        return true;
++    }
++    if (errno != ENOTSUP && errno != EOPNOTSUPP && errno != EPERM) {
++        return false;
++    }
++    const fs::path side = attrSidecar(path);
++    std::error_code ec;
++    fs::create_directories(side.parent_path(), ec);
++    FILE* f = std::fopen(side.c_str(), "wb");
++    if (!f) {
++        return false;
++    }
++    const bool ok = std::fwrite(raw, 1, 12, f) == 12;
++    return std::fclose(f) == 0 && ok;
++}
++
++ssize_t readRawAttr(const fs::path& path, u8* raw, std::size_t size) {
++    const ssize_t got = ::lgetxattr(path.c_str(), kLinuxAttrName, raw, size);
++    if (got >= 0 || (errno != ENOTSUP && errno != EOPNOTSUPP && errno != ENODATA)) {
++        return got;
++    }
++    FILE* f = std::fopen(attrSidecar(path).c_str(), "rb");
++    if (!f) {
++        return -1;
++    }
++    const std::size_t n = size == 0 ? 12 : std::fread(raw, 1, size, f);
++    std::fclose(f);
++    return static_cast<ssize_t>(n);
++}
++
++void moveAttrSidecar(const fs::path& from, const fs::path& to) {
++    std::error_code ec;
++    const fs::path a = attrSidecar(from), b = attrSidecar(to);
++    if (fs::exists(a, ec)) {
++        fs::create_directories(b.parent_path(), ec);
++        fs::rename(a, b, ec);
++    }
++    fs::path dirA = a, dirB = b;  // a directory's children
++    dirA.replace_extension();
++    dirB.replace_extension();
++    if (fs::is_directory(dirA, ec)) {
++        fs::remove_all(dirB, ec);
++        fs::rename(dirA, dirB, ec);
++    }
++}
++
++void removeAttrSidecar(const fs::path& path) {
++    std::error_code ec;
++    const fs::path a = attrSidecar(path);
++    fs::remove(a, ec);
++    fs::path dir = a;
++    dir.replace_extension();
++    fs::remove_all(dir, ec);
++}
++#endif
++
+ bool writeAttr(const fs::path& path, const Attr& a) {
+     u8 raw[12];
+     encode(a, raw);
+-    return ::setxattr(path.c_str(), kAttrName, raw, sizeof(raw), 0, XATTR_NOFOLLOW) == 0;
++    return writeRawAttr(path, raw);
+ }
+ 
+ // Nodes without metadata (placed in the tree by hand) belong to the running
+ // title with owner and group read/write.
+ Attr readAttr(const fs::path& path) {
+     u8 raw[12];
+-    const ssize_t got = ::getxattr(path.c_str(), kAttrName, raw, sizeof(raw), 0, XATTR_NOFOLLOW);
++    const ssize_t got = readRawAttr(path, raw, sizeof(raw));
+     Attr a;
+     if (got != static_cast<ssize_t>(sizeof(raw))) {
+         a.ownerId = state().uid;
+@@ -284,7 +371,7 @@ bool mount(const fs::path& root, std::string* error) {
+     state().root = fs::absolute(root, ec);
+     state().mounted = true;
+     // The root directory: system-owned, readable and writable by everyone.
+-    if (::getxattr(state().root.c_str(), kAttrName, nullptr, 0, 0, XATTR_NOFOLLOW) < 0) {
++    if (readRawAttr(state().root, nullptr, 0) < 0) {
+         Attr a;
+         a.ownerAccess = 3;
+         a.groupAccess = 3;
+@@ -569,6 +656,9 @@ ISFSError remove(const char* path) {
+     }
+     std::error_code ec;
+     fs::remove_all(host, ec);
++    if (!ec) {
++        removeAttrSidecar(host);
++    }
+     return ec ? hostError(ec.value()) : ISFS_ERROR_OK;
+ }
+ 
+@@ -631,6 +721,7 @@ ISFSError rename(const char* oldPath, const char* newPath) {
+     if (::rename(source.c_str(), target.c_str()) != 0) {
+         return hostError(errno);
+     }
++    moveAttrSidecar(source, target);
+     return ISFS_ERROR_OK;
+ }
+ 
+diff --git a/native/platform/os/os_crash.cpp b/native/platform/os/os_crash.cpp
+index dcbcd80..81d62c9 100644
+--- a/native/platform/os/os_crash.cpp
++++ b/native/platform/os/os_crash.cpp
+@@ -104,7 +104,9 @@ void emit(int fd, const char* fmt, ...) {
+ void writeReport(int sig, siginfo_t* info, void* ucontextRaw) {
+     const int fd = gReportPath[0] ? ::open(gReportPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644) : -1;
+     emit(fd, "==== Petari native crash report ====\n");
+-    emit(fd, "signal: %s (%d), code %d, fault address %p\n", signalName(sig), sig, info ? info->si_code : 0, info ? info->si_addr : nullptr);
++    // "0x%llx", not %p: glibc prints a null %p as "(nil)" (galaxy-choya-native).
++    emit(fd, "signal: %s (%d), code %d, fault address 0x%llx\n", signalName(sig), sig, info ? info->si_code : 0,
++         static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(info ? info->si_addr : nullptr)));
+     if (gHavePanic.load()) {
+         emit(fd, "last panic: %s\n", gPanicMessage);
+     }
+@@ -118,6 +120,7 @@ void writeReport(int sig, siginfo_t* info, void* ucontextRaw) {
+     }
+     emit(fd, "interrupts disabled on faulting thread: %s\n", OS::interruptsDisabled() ? "yes" : "no");
+ 
++#if defined(__APPLE__)
+     if (ucontextRaw) {
+         auto* uc = static_cast<ucontext_t*>(ucontextRaw);
+         const auto& ss = uc->uc_mcontext->__ss;
+@@ -133,6 +136,30 @@ void writeReport(int sig, siginfo_t* info, void* ucontextRaw) {
+             }
+             emit(fd, "\n");
+         }
++#else
++    if (ucontextRaw) {
++        auto* uc = static_cast<ucontext_t*>(ucontextRaw);
++#if defined(__aarch64__)
++        // galaxy-choya-native: Linux aarch64 mcontext.
++        const auto& m = uc->uc_mcontext;
++        emit(fd, "host arm64 registers (not PowerPC):\n");
++        emit(fd, "  pc %016llx  lr %016llx  sp %016llx  fp %016llx\n", static_cast<unsigned long long>(m.pc),
++             static_cast<unsigned long long>(m.regs[30]), static_cast<unsigned long long>(m.sp),
++             static_cast<unsigned long long>(m.regs[29]));
++        for (int i = 0; i < 29; i += 4) {
++            emit(fd, "  x%-2d %016llx", i, static_cast<unsigned long long>(m.regs[i]));
++            for (int j = i + 1; j < i + 4 && j < 29; ++j) {
++                emit(fd, "  x%-2d %016llx", j, static_cast<unsigned long long>(m.regs[j]));
++            }
++            emit(fd, "\n");
++        }
++#elif defined(__x86_64__)
++        const auto* g = uc->uc_mcontext.gregs;
++        emit(fd, "host x86-64 registers (PC build, not PowerPC):\n");
++        emit(fd, "  rip %016llx  rsp %016llx  rbp %016llx\n", static_cast<unsigned long long>(g[REG_RIP]),
++             static_cast<unsigned long long>(g[REG_RSP]), static_cast<unsigned long long>(g[REG_RBP]));
++#endif
++#endif
+     }
+ 
+     emit(fd, "host backtrace:\n");
+diff --git a/native/src/host_allocation.cpp b/native/src/host_allocation.cpp
+index 7d190f5..884b8de 100644
+--- a/native/src/host_allocation.cpp
++++ b/native/src/host_allocation.cpp
+@@ -2,9 +2,20 @@
+ 
+ #include <cxxabi.h>
+ #include <dlfcn.h>
++#if defined(__APPLE__)
+ #include <mach-o/dyld.h>
+ #include <mach-o/loader.h>
+ #include <mach-o/nlist.h>
++#else
++// galaxy-choya-native: the main executable's symbols come from its ELF .symtab (/proc/self/exe).
++#include <elf.h>
++#include <fcntl.h>
++#include <link.h>
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <unistd.h>
++#include <galaxy_darwin_compat.h>
++#endif
+ #include <pthread.h>
+ 
+ #include <algorithm>
+@@ -130,6 +141,85 @@ struct MainSymbols {
+ };
+ std::atomic<MainSymbols*> gMainSymbols{nullptr};
+ 
++#if !defined(__APPLE__)
++// Linux: the same table from the ELF symbol table of /proc/self/exe (mapped read-only and kept mapped, because the
++// names point into it). Function and object symbols with a size, plus the load bias of the main program (PIE).
++// The binary must keep .symtab (do not strip it: scripts/package_portmaster.sh keeps it); without it the table is
++// empty and lookups fall back to dladdr, as on macOS before the table is built.
++MainSymbols* buildMainSymbols() {
++    auto* table = new MainSymbols;
++    const int fd = ::open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
++    if (fd < 0) {
++        return table;
++    }
++    struct stat st {};
++    if (::fstat(fd, &st) != 0 || st.st_size < static_cast<off_t>(sizeof(ElfW(Ehdr)))) {
++        ::close(fd);
++        return table;
++    }
++    void* map = ::mmap(nullptr, static_cast<std::size_t>(st.st_size), PROT_READ, MAP_PRIVATE, fd, 0);
++    ::close(fd);
++    if (map == MAP_FAILED) {
++        return table;
++    }
++    const auto* base = static_cast<const unsigned char*>(map);
++    const auto* eh = reinterpret_cast<const ElfW(Ehdr)*>(base);
++    if (std::memcmp(eh->e_ident, ELFMAG, SELFMAG) != 0 || eh->e_shoff == 0) {
++        return table;
++    }
++    std::uintptr_t bias = 0;
++    dl_iterate_phdr([](dl_phdr_info* info, std::size_t, void* data) -> int {
++        *static_cast<std::uintptr_t*>(data) = info->dlpi_addr;  // the first object is the main program
++        return 1;
++    }, &bias);
++    const auto* sections = reinterpret_cast<const ElfW(Shdr)*>(base + eh->e_shoff);
++    std::vector<std::pair<std::uint64_t, const char*>> entries;
++    std::uint64_t low = UINT64_MAX, high = 0;
++    for (int i = 0; i < eh->e_shnum; ++i) {
++        const ElfW(Shdr)& sh = sections[i];
++        if ((sh.sh_flags & SHF_EXECINSTR) != 0 && sh.sh_addr != 0) {
++            low = std::min<std::uint64_t>(low, sh.sh_addr + bias);
++            high = std::max<std::uint64_t>(high, sh.sh_addr + sh.sh_size + bias);
++        }
++        if (sh.sh_type != SHT_SYMTAB || sh.sh_link >= eh->e_shnum) {
++            continue;
++        }
++        const char* strings = reinterpret_cast<const char*>(base + sections[sh.sh_link].sh_offset);
++        const auto* symbols = reinterpret_cast<const ElfW(Sym)*>(base + sh.sh_offset);
++        const std::size_t count = sh.sh_size / sizeof(ElfW(Sym));
++        for (std::size_t s = 0; s < count; ++s) {
++            const ElfW(Sym)& symbol = symbols[s];
++            const int type = ELF64_ST_TYPE(symbol.st_info);
++            if (symbol.st_shndx == SHN_UNDEF || symbol.st_name == 0 || (type != STT_FUNC && type != STT_OBJECT)) {
++                continue;
++            }
++            const char* name = strings + symbol.st_name;
++            if (name[0] == '\0' || name[0] == '$' || std::strncmp(name, ".L", 2) == 0) {
++                continue;  // mapping symbols ($x/$d on aarch64) and assembler-local labels
++            }
++            entries.emplace_back(symbol.st_value + bias, name);
++        }
++    }
++    if (entries.empty() || high <= low) {
++        return table;
++    }
++    table->low = low;
++    table->high = high;
++    std::stable_sort(entries.begin(), entries.end(),
++                     [](const auto& a, const auto& b) { return a.first < b.first; });
++    table->addresses.reserve(entries.size());
++    table->names.reserve(entries.size());
++    for (const auto& [address, name] : entries) {
++        table->addresses.push_back(address);
++        table->names.push_back(name);
++    }
++    table->reduced.reset(new std::atomic<const std::string*>[entries.size()]);
++    for (std::size_t i = 0; i < entries.size(); ++i) {
++        table->reduced[i].store(nullptr, std::memory_order_relaxed);
++    }
++    return table;
++}
++#else
+ MainSymbols* buildMainSymbols() {
+     auto* table = new MainSymbols;
+     const auto* header = reinterpret_cast<const mach_header_64*>(_dyld_get_image_header(0));
+@@ -191,6 +281,7 @@ MainSymbols* buildMainSymbols() {
+     }
+     return table;
+ }
++#endif
+ 
+ // The symbol containing `address` in the main executable: its index, or -1
+ // (also while the table is not built yet).
+diff --git a/native/src/intrinsics.cpp b/native/src/intrinsics.cpp
+index a7bdfdf..3a9034e 100644
+--- a/native/src/intrinsics.cpp
++++ b/native/src/intrinsics.cpp
+@@ -5,6 +5,6 @@
+ f32 __frsqrte(f32 value) { return 1.0f / std::sqrt(value); }
+ u32 __cntlzw(u32 value) { return value == 0 ? 32 : __builtin_clz(value); }
+ s32 __abs(s32 value) { return value < 0 ? static_cast<s32>(0u - static_cast<u32>(value)) : value; }
+-f32 __fabsf(f32 value) { return std::fabs(value); }
+-f64 __fabs(f64 value) { return std::fabs(value); }
++f32 __fabsf(f32 value) PETARI_INTRINSIC_NOEXCEPT { return std::fabs(value); }
++f64 __fabs(f64 value) PETARI_INTRINSIC_NOEXCEPT { return std::fabs(value); }
+ void* __memcpy(void* dst, const void* src, int size) { return std::memcpy(dst, src, size); }
+diff --git a/native/tests/platform_crash_tests.cpp b/native/tests/platform_crash_tests.cpp
+index b1eeee0..7814962 100644
+--- a/native/tests/platform_crash_tests.cpp
++++ b/native/tests/platform_crash_tests.cpp
+@@ -115,7 +115,12 @@ void testCrashReports() {
+     check(WIFSIGNALED(segv) && (WTERMSIG(segv) == SIGSEGV || WTERMSIG(segv) == SIGBUS), "fault terminates with its signal");
+     check(has(segvReport, "==== Petari native crash report ====") && (has(segvReport, "SIGSEGV") || has(segvReport, "SIGBUS")), "report names the signal");
+     check(has(segvReport, "fault address 0x0"), "report has the fault address");
++#if defined(__x86_64__)
++    // galaxy-choya-native: PC (x86-64) test build; the console build checks the arm64 labels below.
++    check(has(segvReport, "host x86-64 registers") && has(segvReport, "  rip "), "host registers, labelled");
++#else
+     check(has(segvReport, "host arm64 registers (not PowerPC)") && has(segvReport, "  pc ") && has(segvReport, "x28"), "host registers, labelled");
++#endif
+     check(has(segvReport, "host backtrace:"), "host backtrace");
+     check(has(segvReport, "OS thread: 0x"), "running OS thread");
+     check(has(segvReport, "DSI -> 0x"), "registered game handler listed, not called");
+diff --git a/native/tests/platform_nand_tests.cpp b/native/tests/platform_nand_tests.cpp
+index 3fda210..48567d7 100644
+--- a/native/tests/platform_nand_tests.cpp
++++ b/native/tests/platform_nand_tests.cpp
+@@ -7,6 +7,9 @@
+ #include <revolution/sc.h>
+ 
+ #include <sys/xattr.h>
++#if !defined(__APPLE__)
++#include "../platform/nand/isfs_host.hpp"
++#endif
+ #include <unistd.h>
+ 
+ #include <atomic>
+@@ -256,7 +259,23 @@ void testSaveData(const fs::path& root) {
+ 
+     // Metadata is stored with the host file.
+     char raw[12];
++#if defined(__APPLE__)
+     check(::getxattr(hostSave.c_str(), "com.petari.nand", raw, sizeof(raw), 0, 0) == 12, "NAND metadata stored as an xattr");
++#else
++    {
++        // galaxy-choya-native: xattr where supported, otherwise a sidecar next to the NAND root.
++        bool stored = ::lgetxattr(hostSave.c_str(), "user.petari.nand", raw, sizeof(raw)) == 12;
++        if (!stored) {
++            std::error_code sideEc;
++            const std::filesystem::path nandRoot = PetariNative::Platform::NAND::Fs::root();
++            const auto rel = std::filesystem::relative(hostSave, nandRoot, sideEc);
++            auto side = nandRoot.parent_path() / ("." + nandRoot.filename().string() + "-nandattr") / rel;
++            side += ".attr";
++            stored = std::filesystem::file_size(side, sideEc) == 12;
++        }
++        check(stored, "NAND metadata stored as an xattr or sidecar");
++    }
++#endif
+ 
+     // Remount: saves persist, /tmp is cleared again.
+     writeSequence("/tmp/left.bin", save.data(), 32, 0x3C, &written);
+diff --git a/native/tools/array_index_audit.py b/native/tools/array_index_audit.py
+index 3a2bdaf..4d6ca09 100644
+--- a/native/tools/array_index_audit.py
++++ b/native/tools/array_index_audit.py
+@@ -319,7 +319,9 @@ def source_line(file, line):
+ 
+ def selftest():
+     fixture = ROOT / "native/tools/array_index_audit_fixture.cpp"
+-    entry = {"directory": str(ROOT), "file": str(fixture), "arguments": ["c++", "-std=c++17", "-c", str(fixture)]}
++    # clang: the audit reads clang's -ast-dump (on Linux "c++" is usually GCC) - galaxy-choya-native
++    cxx = os.environ.get("PETARI_AUDIT_CXX", "c++" if sys.platform == "darwin" else "clang++")
++    entry = {"directory": str(ROOT), "file": str(fixture), "arguments": [cxx, "-std=c++17", "-c", str(fixture)]}
+     _, found, err = scan(entry, True)
+     got = sorted((r["class"], r["line"]) for r in found)
+     lines = fixture.read_text().splitlines()

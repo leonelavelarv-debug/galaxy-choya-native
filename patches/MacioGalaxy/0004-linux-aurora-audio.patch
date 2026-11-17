@@ -1,0 +1,134 @@
+diff --git a/native/audio/sdl_sink.cpp b/native/audio/sdl_sink.cpp
+index 24d71e1..aa5709e 100644
+--- a/native/audio/sdl_sink.cpp
++++ b/native/audio/sdl_sink.cpp
+@@ -6,7 +6,9 @@
+ #include <SDL3/SDL_init.h>
+ #include <SDL3/SDL_error.h>
+ #include <SDL3/SDL_hints.h>
++#if defined(__APPLE__)
+ #include <CoreAudio/CoreAudio.h>
++#endif
+ #include <cmath>
+ #include <string>
+ #include <algorithm>
+@@ -15,13 +17,18 @@
+ #include <chrono>
+ #include <cstdio>
+ #include <cstdlib>
++#include <cstring>
+ #include <thread>
+ #include <condition_variable>
+ #include <mutex>
+ 
+ #include <pthread.h>
+ #include <pthread/qos.h>
++#if defined(__APPLE__)
+ #include <sys/sysctl.h>
++#else
++#include <galaxy_darwin_compat.h>
++#endif
+ #include <sys/time.h>
+ #include <unistd.h>
+ 
+@@ -112,6 +119,34 @@ void raiseMax(std::atomic<std::int64_t>& worst, std::int64_t value) {
+ // Seconds since the process started, printed on the [audio] lines so they can
+ // be lined up with other timestamped output (the frame trace, stall reports).
+ double processSeconds() {
++#if !defined(__APPLE__)
++    // Linux (galaxy-choya-native): start time from /proc/self/stat (field 22, clock ticks since boot).
++    FILE* f = std::fopen("/proc/self/stat", "r");
++    if (!f) {
++        return -1.0;
++    }
++    char buf[1024];
++    const std::size_t n = std::fread(buf, 1, sizeof(buf) - 1, f);
++    std::fclose(f);
++    buf[n] = '\0';
++    const char* p = std::strrchr(buf, ')');
++    if (!p) {
++        return -1.0;
++    }
++    unsigned long long startTicks = 0;
++    int field = 2;
++    for (const char* q = p + 2; *q && field < 22; ++q) {
++        if (*q == ' ') {
++            ++field;
++            if (field == 22) {
++                startTicks = std::strtoull(q + 1, nullptr, 10);
++            }
++        }
++    }
++    timespec up{};
++    clock_gettime(CLOCK_BOOTTIME, &up);
++    return static_cast<double>(up.tv_sec) + up.tv_nsec / 1e9 - static_cast<double>(startTicks) / sysconf(_SC_CLK_TCK);
++#else
+     struct kinfo_proc info {};
+     std::size_t size = sizeof(info);
+     int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, static_cast<int>(getpid())};
+@@ -122,6 +157,7 @@ double processSeconds() {
+     gettimeofday(&now, nullptr);
+     const struct timeval& started = info.kp_proc.p_starttime;
+     return static_cast<double>(now.tv_sec - started.tv_sec) + (now.tv_usec - started.tv_usec) / 1e6;
++#endif
+ }
+ 
+ void report() {
+@@ -288,10 +324,14 @@ void stop(void*) {
+ struct HalLatency {
+     bool known = false;
+     double rate = 0.0;
+-    UInt32 deviceLatency = 0, safetyOffset = 0, streamLatency = 0, ioBuffer = 0;
++    std::uint32_t deviceLatency = 0, safetyOffset = 0, streamLatency = 0, ioBuffer = 0;
+ };
+ HalLatency queryHalLatency() {
+     HalLatency hal;
++#if !defined(__APPLE__)
++    // Linux (galaxy-choya-native): no portable HAL latency query through SDL; reported as unknown.
++    return hal;
++#else
+     AudioObjectPropertyAddress address{kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal,
+                                        kAudioObjectPropertyElementMain};
+     AudioDeviceID deviceId = 0;
+@@ -319,6 +359,7 @@ HalLatency queryHalLatency() {
+         AudioObjectGetPropertyData(streams[0], &latencyAddress, 0, nullptr, &n, &hal.streamLatency);
+     }
+     return hal;
++#endif
+ }
+ 
+ // One line at start (PETARI_AUDIO_DIAG): every stage between AI DMA and the
+diff --git a/native/gx/patch_aurora_texture_timing.py b/native/gx/patch_aurora_texture_timing.py
+index 63e9f9f..0ad583b 100644
+--- a/native/gx/patch_aurora_texture_timing.py
++++ b/native/gx/patch_aurora_texture_timing.py
+@@ -39,13 +39,19 @@ struct PetariTextureProfile {
+       std::fprintf(file, "frame,seconds,objects,hashes,stable_hashes,uploads,stable_uploads,sweep_us,sweep_cpu_us,thread_id,on_main_thread\n");
+     }
+     std::uint64_t threadId = 0;
++#if defined(__APPLE__)
+     pthread_threadid_np(nullptr, &threadId);
++    const int onMainThread = pthread_main_np();
++#else  // Linux (galaxy-choya-native)
++    threadId = static_cast<std::uint64_t>(syscall(SYS_gettid));
++    const int onMainThread = static_cast<pid_t>(threadId) == getpid() ? 1 : 0;
++#endif
+     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+     std::fprintf(file, "%llu,%.6f,%zu,%llu,%llu,%llu,%llu,%.3f,%.3f,%llu,%d\n",
+                  static_cast<unsigned long long>(frame), seconds, objects,
+                  static_cast<unsigned long long>(hashes), static_cast<unsigned long long>(stableHashes),
+                  static_cast<unsigned long long>(uploads), static_cast<unsigned long long>(stableUploads), sweepUs, sweepCpuUs,
+-                 static_cast<unsigned long long>(threadId), pthread_main_np());
++                 static_cast<unsigned long long>(threadId), onMainThread);
+     std::fflush(file);  // _Exit on normal game shutdown skips destructors and stdio flushing.
+     hashes = stableHashes = uploads = stableUploads = 0;
+   }
+@@ -90,7 +96,7 @@ std::uint64_t petariTextureCpuNs() {
+     sPetariTextureProfile.frame(s_frameCount, s_textureObjectCaches.size(), us, cpuUs);
+   }
+ ''')
+-    text = '#include <chrono>\n#include <time.h>\n#include <cstdio>\n#include <cstdlib>\n#include <cstdint>\n#include <pthread.h>\n#include <petari/host_allocation.hpp>\n' + text
++    text = '#include <chrono>\n#include <time.h>\n#include <cstdio>\n#include <cstdlib>\n#include <cstdint>\n#include <pthread.h>\n#include <sys/syscall.h>\n#include <unistd.h>\n#include <petari/host_allocation.hpp>\n' + text
+ text = '#include <petari/frame_telemetry.hpp>\n' + text
+ output.parent.mkdir(parents=True, exist_ok=True)
+ if not output.exists() or output.read_text() != text:

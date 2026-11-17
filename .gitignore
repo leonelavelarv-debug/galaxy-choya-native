@@ -1,0 +1,11 @@
+third_party/
+work/
+build*/
+out/
+*.pyc
+__pycache__/
+/game-data/
+*.iso
+*.rvz
+*.wbfs
+*.wlpk

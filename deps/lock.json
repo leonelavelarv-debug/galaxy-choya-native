@@ -1,0 +1,90 @@
+{
+  "formato": 1,
+  "nota": "Dependencias fijadas por commit. scripts/fetch_deps.py clona cada una en third_party/<nombre> y comprueba el commit. Nunca se suben cambios a estos repositorios: los parches de patches/<nombre>/ se aplican sobre una copia de trabajo en work/<nombre>.",
+  "dependencias": {
+    "MacioGalaxy": {
+      "repo": "https://github.com/classicrob/MacioGalaxy",
+      "commit": "60662da6f5d0e95467637eee4ebab3282eeaf863",
+      "licencia": "CC0-1.0 (código Petari y port nativo); ver third_party/MacioGalaxy/LICENSE",
+      "uso": "lógica Petari nativa (C++17), servicios de plataforma, lectores J3D/KCL/JPA, JAudio, entrada"
+    },
+    "choya": {
+      "repo": "https://github.com/leonelavelarv-debug/choya-wii-converter",
+      "commit": "95c75ccc6a56c6ce3b2be4c84903e43ffd1f84e8",
+      "version": "0.42.1",
+      "licencia": "del autor del repositorio (leonelavelarv-debug); sin_dawn conserva LICENSE-dawn (BSD-3-Clause)",
+      "uso": "motor GLES (choya_gx_core), conversor assets.wlpk, mando, empaquetado PortMaster"
+    },
+    "aurora": {
+      "repo": "https://github.com/encounter/aurora.git",
+      "commit": "08122911e8621acb7ded6563813b264bec1494b5",
+      "licencia": "MIT",
+      "uso": "versión única de Aurora: la que fija MacioGalaxy en native/gx/CMakeLists.txt"
+    },
+    "llvm-runtimes": {
+      "repo": "https://github.com/llvm/llvm-project.git",
+      "commit": "c13b7485b87909fcf739f62cfa382b55407433c0",
+      "tag": "llvmorg-18.1.3",
+      "sparse": [
+        "libcxx/",
+        "libcxxabi/",
+        "libunwind/",
+        "runtimes/",
+        "cmake/",
+        "llvm/cmake/",
+        "llvm/utils/llvm-lit/",
+        "llvm/utils/lit/",
+        "third-party/"
+      ],
+      "licencia": "Apache-2.0 WITH LLVM-exception",
+      "uso": "libc++ estática: MacioGalaxy exige libc++ (native/include/petari/game_compat.hpp); enlazada estática evita depender de la libstdc++ del firmware"
+    }
+  },
+  "aurora_extern": {
+    "nota": "Dependencias que Aurora 08122911 baja con FetchContent (mismas versiones que su extern/CMakeLists.txt y AuroraDependencyVersions.cmake). Se clonan por git y se pasan como FETCHCONTENT_SOURCE_DIR_<NOMBRE>: la compilación no necesita red y no depende de las URL de archivo. Dawn se usa como paquete precompilado solo en la PC (referencia); en la consola el plan es el WebGPU nulo de Choya (docs/BLOQUEOS.md B2).",
+    "dependencias": {
+      "abseil-cpp": {
+        "repo": "https://github.com/abseil/abseil-cpp.git",
+        "ref": "refs/tags/20240722.0",
+        "commit": "4447c7562e3bc702ade25105912dce503f0c4010",
+        "fetchcontent": "ABSEIL-CPP"
+      },
+      "xxhash": {
+        "repo": "https://github.com/Cyan4973/xxHash.git",
+        "ref": "refs/tags/v0.8.3",
+        "commit": "e626a72bc2321cd320e953a0ccf1584cad60f363",
+        "fetchcontent": "XXHASH"
+      },
+      "fmt": {
+        "repo": "https://github.com/fmtlib/fmt.git",
+        "ref": "refs/tags/12.1.0",
+        "commit": "407c905e45ad75fc29bf0f9bb7c5c2fd3475976f",
+        "fetchcontent": "FMT"
+      },
+      "imgui": {
+        "repo": "https://github.com/ocornut/imgui.git",
+        "ref": "refs/tags/v1.91.9b-docking",
+        "commit": "4806a1924ff6181180bf5e4b8b79ab4394118875",
+        "fetchcontent": "IMGUI"
+      },
+      "tracy": {
+        "repo": "https://github.com/wolfpld/tracy.git",
+        "ref": "refs/tags/v0.14.1",
+        "commit": "30997d5ca6bb632cc10807a1da8a6d3de0aeeb3c",
+        "fetchcontent": "TRACY"
+      },
+      "SDL": {
+        "repo": "https://github.com/libsdl-org/SDL.git",
+        "ref": "refs/tags/release-3.4.10",
+        "commit": "8e37db5e797b6167f3a00d697d816a684bd259c7",
+        "fetchcontent": "SDL"
+      },
+      "zstd": {
+        "repo": "https://github.com/facebook/zstd.git",
+        "ref": "refs/tags/v1.5.7",
+        "commit": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+        "fetchcontent": "ZSTD"
+      }
+    }
+  }
+}

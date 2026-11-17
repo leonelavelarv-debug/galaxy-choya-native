@@ -1,0 +1,21 @@
+# galaxy-choya-native: entorno de compilación para la RG35XX H.
+# Debian 12 (bookworm): glibc 2.36, igual que el contenedor de Choya. El binario no puede pedir una glibc más nueva
+# que la del firmware: comprueba en la consola con `ldd --version` (KNULLI y muOS recientes traen >= 2.36; ver
+# docs/BLOQUEOS.md si no). libc++ va estática (scripts/build_libcxx.sh), así que la libstdc++ del firmware no importa.
+#
+#   docker build -t galaxy-choya-aarch64 -f docker/Dockerfile.aarch64 docker
+#   docker run --rm -v "$PWD":/src -w /src galaxy-choya-aarch64 sh scripts/build.sh aarch64
+FROM debian:bookworm
+ARG DEBIAN_FRONTEND=noninteractive
+RUN dpkg --add-architecture arm64 && apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates git python3 cmake ninja-build pkg-config file \
+      clang-16 lld-16 llvm-16 \
+      gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross \
+      libsqlite3-dev:arm64 zlib1g-dev:arm64 libpng-dev:arm64 \
+      libegl-dev:arm64 libgles-dev:arm64 libdrm-dev:arm64 libgbm-dev:arm64 \
+      libasound2-dev:arm64 libudev-dev:arm64 \
+    && rm -rf /var/lib/apt/lists/*
+# Debian 12 trae clang 16: se usa con el triple aarch64 (el toolchain lo busca como GALAXY_CLANG).
+ENV GALAXY_CLANG=clang-16
+RUN ln -s /usr/bin/ld.lld-16 /usr/local/bin/ld.lld && ln -s /usr/bin/clang-16 /usr/local/bin/clang \
+    && ln -s /usr/bin/clang++-16 /usr/local/bin/clang++

@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "name": "galaxy-choya.zip",
+  "items": ["Galaxy-Choya.sh", "galaxy-choya"],
+  "items_opt": [],
+  "attr": {
+    "title": "Super Mario Galaxy (galaxy-choya-native)",
+    "porter": ["galaxy-choya-native"],
+    "desc": "Port nativo (sin emulador) de Super Mario Galaxy: código Petari/MacioGalaxy compilado para aarch64 y el motor GLES de Choya. Requiere tu propio disco RMGE01 extraído.",
+    "inst": "Copia tu disco extraído (files/ y sys/) a ports/galaxy-choya/gamedata/RMGE01/. Ver README.md.",
+    "genres": ["platformer"],
+    "image": null,
+    "rtr": false,
+    "exp": false,
+    "runtime": null,
+    "reqs": ["aarch64"],
+    "arch": ["aarch64"]
+  }
+}

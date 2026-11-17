@@ -1,0 +1,307 @@
+diff --git a/include/Game/AudioLib/AudEffector.hpp b/include/Game/AudioLib/AudEffector.hpp
+index fe0e755..6b2a252 100644
+--- a/include/Game/AudioLib/AudEffector.hpp
++++ b/include/Game/AudioLib/AudEffector.hpp
+@@ -1,6 +1,6 @@
+ #pragma once
+ 
+-#include <JSystem/JAudio2/JASDSPInterface.hpp>
++#include <JSystem/JAudio2/JASDspInterface.hpp>
+ 
+ class JKRHeap;
+ 
+diff --git a/include/Game/Enemy.hpp b/include/Game/Enemy.hpp
+index a9c7d94..b69d368 100644
+--- a/include/Game/Enemy.hpp
++++ b/include/Game/Enemy.hpp
+@@ -20,7 +20,7 @@
+ #include "Game/Enemy/KameckBeam.hpp"
+ #include "Game/Enemy/KameckBeamHolder.hpp"
+ #include "Game/Enemy/KameckHolder.hpp"
+-#include "Game/Enemy/KariKariDirector.hpp"
++#include "Game/Enemy/KarikariDirector.hpp"
+ #include "Game/Enemy/Karon.hpp"
+ #include "Game/Enemy/Kuribo.hpp"
+ #include "Game/Enemy/Meramera.hpp"
+diff --git a/include/Game/RhythmLib/AudMeTrack.hpp b/include/Game/RhythmLib/AudMeTrack.hpp
+index af8362a..2532ae5 100644
+--- a/include/Game/RhythmLib/AudMeTrack.hpp
++++ b/include/Game/RhythmLib/AudMeTrack.hpp
+@@ -4,7 +4,7 @@
+ #include "Game/RhythmLib/AudMeSeqCtrl.hpp"
+ #include "Game/RhythmLib/AudMeTrackCallback.hpp"
+ #include <JSystem/JAudio2/JASBankTable.hpp>
+-#include <JSystem/JAudio2/JASDSPInterface.hpp>
++#include <JSystem/JAudio2/JASDspInterface.hpp>
+ #include <JSystem/JGadget/linklist.hpp>
+ #include <JSystem/JAudio2/JASHeapCtrl.hpp>
+ #include <JSystem/JAudio2/JASOscillator.hpp>
+diff --git a/libs/JSystem/include/JSystem/JAudio2/JASDSPChannel.hpp b/libs/JSystem/include/JSystem/JAudio2/JASDSPChannel.hpp
+index 4995212..4f3d6f4 100644
+--- a/libs/JSystem/include/JSystem/JAudio2/JASDSPChannel.hpp
++++ b/libs/JSystem/include/JSystem/JAudio2/JASDSPChannel.hpp
+@@ -1,6 +1,6 @@
+ #pragma once
+ 
+-#include "JSystem/JAudio2/JASDSPInterface.hpp"
++#include "JSystem/JAudio2/JASDspInterface.hpp"
+ 
+ struct JASDSPChannel {
+     typedef s32 (*Callback)(u32, JASDsp::TChannel*, void*);
+diff --git a/libs/RVLFaceLib/include/RFLi_Database.h b/libs/RVLFaceLib/include/RFLi_Database.h
+index 829756d..96acf14 100644
+--- a/libs/RVLFaceLib/include/RFLi_Database.h
++++ b/libs/RVLFaceLib/include/RFLi_Database.h
+@@ -2,8 +2,8 @@
+ #define RVL_FACE_LIBRARY_INTERNAL_DATABASE_H
+ #include "RFLi_HiddenDatabase.h"
+ #include "RFLi_Types.h"
+-#include <revolution/MEM.h>
+-#include <revolution/OS.h>
++#include <revolution/mem.h>
++#include <revolution/os.h>
+ #include <revolution/types.h>
+ #ifdef __cplusplus
+ extern "C" {
+diff --git a/libs/RVLFaceLib/include/RFLi_NANDAccess.h b/libs/RVLFaceLib/include/RFLi_NANDAccess.h
+index 48554e9..18d51ef 100644
+--- a/libs/RVLFaceLib/include/RFLi_NANDAccess.h
++++ b/libs/RVLFaceLib/include/RFLi_NANDAccess.h
+@@ -1,9 +1,9 @@
+ #ifndef RVL_FACE_LIBRARY_INTERNAL_NAND_ACCESS_H
+ #define RVL_FACE_LIBRARY_INTERNAL_NAND_ACCESS_H
+ #include "RFLi_Types.h"
+-#include <revolution/FS.h>
+-#include <revolution/MEM.h>
+-#include <revolution/NAND.h>
++#include <revolution/fs.h>
++#include <revolution/mem.h>
++#include <revolution/nand.h>
+ #include <revolution/types.h>
+ #ifdef __cplusplus
+ extern "C" {
+diff --git a/libs/RVLFaceLib/include/RFLi_System.h b/libs/RVLFaceLib/include/RFLi_System.h
+index 33e0594..8fc2bcb 100644
+--- a/libs/RVLFaceLib/include/RFLi_System.h
++++ b/libs/RVLFaceLib/include/RFLi_System.h
+@@ -7,7 +7,7 @@
+ #include "RFLi_NANDAccess.h"
+ #include "RFLi_NANDLoader.h"
+ #include "RFLi_Types.h"
+-#include <revolution/MEM.h>
++#include <revolution/mem.h>
+ #include <revolution/types.h>
+ #ifdef __cplusplus
+ extern "C" {
+diff --git a/libs/RVL_SDK/include/revolution/wud/wud.h b/libs/RVL_SDK/include/revolution/wud/wud.h
+index 4f282e0..6a23647 100644
+--- a/libs/RVL_SDK/include/revolution/wud/wud.h
++++ b/libs/RVL_SDK/include/revolution/wud/wud.h
+@@ -2,8 +2,8 @@
+ #define RVL_SDK_WUD_H
+ #include "revolution/types.h"
+ 
+-#include "revolution/BTE.h"
+-#include "revolution/SC.h"
++#include "revolution/bte.h"
++#include "revolution/sc.h"
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+diff --git a/src/Game/Map/FileSelectItem.cpp b/src/Game/Map/FileSelectItem.cpp
+index 0a70615..fc8382d 100644
+--- a/src/Game/Map/FileSelectItem.cpp
++++ b/src/Game/Map/FileSelectItem.cpp
+@@ -1,4 +1,4 @@
+-#include "Game/Map/FileSelectItem.hpp"
++#include "Game/Map/FIleSelectItem.hpp"
+ #include "Game/LiveActor/Nerve.hpp"
+ #include "Game/LiveActor/PartsModel.hpp"
+ #include "Game/Map/FileSelectIconID.hpp"
+diff --git a/src/Game/Map/FileSelector.cpp b/src/Game/Map/FileSelector.cpp
+index bd81d01..a282267 100644
+--- a/src/Game/Map/FileSelector.cpp
++++ b/src/Game/Map/FileSelector.cpp
+@@ -6,7 +6,7 @@
+ #include "Game/Map/FileSelectCameraController.hpp"
+ #include "Game/Map/FileSelectEffect.hpp"
+ #include "Game/Map/FileSelectFunc.hpp"
+-#include "Game/Map/FileSelectItem.hpp"
++#include "Game/Map/FIleSelectItem.hpp"
+ #include "Game/Map/FileSelectItemDelegator.hpp"
+ #include "Game/Map/FileSelectSky.hpp"
+ #include "Game/NPC/MiiFacePartsHolder.hpp"
+diff --git a/src/Game/Player/MarioActorBlackHole.cpp b/src/Game/Player/MarioActorBlackHole.cpp
+index 20c46dd..325554f 100644
+--- a/src/Game/Player/MarioActorBlackHole.cpp
++++ b/src/Game/Player/MarioActorBlackHole.cpp
+@@ -1,4 +1,4 @@
+-#include "Game/Enemy/KariKariDirector.hpp"
++#include "Game/Enemy/KarikariDirector.hpp"
+ #include "Game/MapObj/BlackHole.hpp"
+ #ifdef PETARI_NATIVE
+ #include <petari/editor/runtime.hpp>
+diff --git a/src/Game/Player/MarioJump.cpp b/src/Game/Player/MarioJump.cpp
+index 4ea6c67..bcc4b62 100644
+--- a/src/Game/Player/MarioJump.cpp
++++ b/src/Game/Player/MarioJump.cpp
+@@ -2,7 +2,7 @@
+ #include <cstdio>
+ #include <petari/ui_observe.hpp>
+ #endif
+-#include "Game/Enemy/KariKariDirector.hpp"
++#include "Game/Enemy/KarikariDirector.hpp"
+ #include "Game/LiveActor/HitSensor.hpp"
+ #include "Game/LiveActor/LiveActor.hpp"
+ #include "Game/Map/HitInfo.hpp"
+diff --git a/src/Game/Player/MarioSlider.cpp b/src/Game/Player/MarioSlider.cpp
+index 77a5afa..2b96042 100644
+--- a/src/Game/Player/MarioSlider.cpp
++++ b/src/Game/Player/MarioSlider.cpp
+@@ -1,5 +1,5 @@
+ #include "Game/Player/MarioSlider.hpp"
+-#include "Game/Enemy/KariKariDirector.hpp"
++#include "Game/Enemy/KarikariDirector.hpp"
+ #include "Game/Map/HitInfo.hpp"
+ #include "Game/Player/Mario.hpp"
+ #include "Game/Player/MarioActor.hpp"
+diff --git a/src/Game/Util/ActorMovementUtil.cpp b/src/Game/Util/ActorMovementUtil.cpp
+index 40899b7..f988c95 100644
+--- a/src/Game/Util/ActorMovementUtil.cpp
++++ b/src/Game/Util/ActorMovementUtil.cpp
+@@ -1,5 +1,5 @@
+ #include "Game/Util/ActorMovementUtil.hpp"
+-#include "Game/Animation/Xanimecore.hpp"
++#include "Game/Animation/XanimeCore.hpp"
+ #include "Game/LiveActor/Binder.hpp"
+ #include "Game/LiveActor/HitSensor.hpp"
+ #include "Game/LiveActor/LiveActor.hpp"
+diff --git a/src/JSystem/JAudio2/JASAiCtrl.cpp b/src/JSystem/JAudio2/JASAiCtrl.cpp
+index 4e7a97e..b7688d3 100644
+--- a/src/JSystem/JAudio2/JASAiCtrl.cpp
++++ b/src/JSystem/JAudio2/JASAiCtrl.cpp
+@@ -5,7 +5,7 @@
+ #include "JSystem/JAudio2/JASCmdStack.hpp"
+ #include "JSystem/JAudio2/JASCriticalSection.hpp"
+ #include "JSystem/JAudio2/JASDSPChannel.hpp"
+-#include "JSystem/JAudio2/JASDSPInterface.hpp"
++#include "JSystem/JAudio2/JASDspInterface.hpp"
+ #include "JSystem/JAudio2/JASHeapCtrl.hpp"
+ #include "JSystem/JAudio2/JASLfo.hpp"
+ #include "JSystem/JAudio2/JASProbe.hpp"
+diff --git a/src/JSystem/JAudio2/JASAramStream.cpp b/src/JSystem/JAudio2/JASAramStream.cpp
+index 29ec0ac..60cb72d 100644
+--- a/src/JSystem/JAudio2/JASAramStream.cpp
++++ b/src/JSystem/JAudio2/JASAramStream.cpp
+@@ -2,7 +2,7 @@
+ #include "JSystem/JAudio2/JASAiCtrl.hpp"
+ #include "JSystem/JAudio2/JASChannel.hpp"
+ #include "JSystem/JAudio2/JASCriticalSection.hpp"
+-#include "JSystem/JAudio2/JASDSPInterface.hpp"
++#include "JSystem/JAudio2/JASDspInterface.hpp"
+ #include "JSystem/JAudio2/JASDriverIF.hpp"
+ #include "JSystem/JAudio2/JASDvdThread.hpp"
+ #include "JSystem/JKernel/JKRAram.hpp"
+diff --git a/src/JSystem/JAudio2/JASAudioThread.cpp b/src/JSystem/JAudio2/JASAudioThread.cpp
+index 6667795..8f2f684 100644
+--- a/src/JSystem/JAudio2/JASAudioThread.cpp
++++ b/src/JSystem/JAudio2/JASAudioThread.cpp
+@@ -2,7 +2,7 @@
+ #include "JSystem/JAudio2/JASAiCtrl.hpp"
+ #include "JSystem/JAudio2/JASChannel.hpp"
+ #include "JSystem/JAudio2/JASDSPChannel.hpp"
+-#include "JSystem/JAudio2/JASDSPInterface.hpp"
++#include "JSystem/JAudio2/JASDspInterface.hpp"
+ #include "JSystem/JAudio2/JASDriverIF.hpp"
+ #include "JSystem/JAudio2/JASHeapCtrl.hpp"
+ #include "JSystem/JAudio2/JASProbe.hpp"
+diff --git a/src/JSystem/JAudio2/JASDSPInterface.cpp b/src/JSystem/JAudio2/JASDSPInterface.cpp
+index 422a9f0..33db56f 100644
+--- a/src/JSystem/JAudio2/JASDSPInterface.cpp
++++ b/src/JSystem/JAudio2/JASDSPInterface.cpp
+@@ -1,4 +1,4 @@
+-#include "JSystem/JAudio2/JASDSPInterface.hpp"
++#include "JSystem/JAudio2/JASDspInterface.hpp"
+ #include "JSystem/JAudio2/JASCalc.hpp"
+ #include "JSystem/JAudio2/JASCriticalSection.hpp"
+ #include "JSystem/JAudio2/JASHeapCtrl.hpp"
+diff --git a/src/JSystem/JAudio2/JASDriverIF.cpp b/src/JSystem/JAudio2/JASDriverIF.cpp
+index c208907..dfb399f 100644
+--- a/src/JSystem/JAudio2/JASDriverIF.cpp
++++ b/src/JSystem/JAudio2/JASDriverIF.cpp
+@@ -1,6 +1,6 @@
+ #include "JSystem/JAudio2/JASDriverIF.hpp"
+ #include "JSystem/JAudio2/JASAiCtrl.hpp"
+-#include "JSystem/JAudio2/JASDSPInterface.hpp"
++#include "JSystem/JAudio2/JASDspInterface.hpp"
+ 
+ void JASDriver::setDSPLevel(f32 param_0) {
+     JASDsp::setDSPMixerLevel(param_0);
+diff --git a/src/JSystem/JAudio2/JASTrack.cpp b/src/JSystem/JAudio2/JASTrack.cpp
+index f29cb62..a2a1fde 100644
+--- a/src/JSystem/JAudio2/JASTrack.cpp
++++ b/src/JSystem/JAudio2/JASTrack.cpp
+@@ -2,7 +2,7 @@
+ #include "JSystem/JAudio2/JASAiCtrl.hpp"
+ #include "JSystem/JAudio2/JASBankTable.hpp"
+ #include "JSystem/JAudio2/JASCriticalSection.hpp"
+-#include "JSystem/JAudio2/JASDSPInterface.hpp"
++#include "JSystem/JAudio2/JASDspInterface.hpp"
+ #include "JSystem/JAudio2/JASDriverIF.hpp"
+ #include "JSystem/JAudio2/JASLfo.hpp"
+ #include "JSystem/JAudio2/JASSoundParams.hpp"
+diff --git a/src/JSystem/JAudio2/dspproc.cpp b/src/JSystem/JAudio2/dspproc.cpp
+index baec55a..1fd9aa7 100644
+--- a/src/JSystem/JAudio2/dspproc.cpp
++++ b/src/JSystem/JAudio2/dspproc.cpp
+@@ -1,5 +1,5 @@
+ #include "JSystem/JAudio2/dspproc.hpp"
+-#include "JSystem/JAudio2/JASDSPInterface.hpp"
++#include "JSystem/JAudio2/JASDspInterface.hpp"
+ #include "JSystem/JAudio2/dsptask.hpp"
+ 
+ #ifdef PETARI_NATIVE
+diff --git a/src/RVLFaceLib/RFL_NANDLoader.c b/src/RVLFaceLib/RFL_NANDLoader.c
+index c185c7d..737236a 100644
+--- a/src/RVLFaceLib/RFL_NANDLoader.c
++++ b/src/RVLFaceLib/RFL_NANDLoader.c
+@@ -1,5 +1,5 @@
+ #include "RVLFaceLibInternal.h"
+-#include <revolution/NAND.h>
++#include <revolution/nand.h>
+ #ifdef PETARI_NATIVE
+ // RFL_Res.dat is big-endian; see native/resource/rfl/rfl_native.h.
+ #include "rfl_native.h"
+diff --git a/src/RVL_SDK/nwc24/NWC24Config.c b/src/RVL_SDK/nwc24/NWC24Config.c
+index ac527ef..cd9902b 100644
+--- a/src/RVL_SDK/nwc24/NWC24Config.c
++++ b/src/RVL_SDK/nwc24/NWC24Config.c
+@@ -1,4 +1,4 @@
+-#include "revolution/DVD.h"
++#include "revolution/dvd.h"
+ #include "revolution/nwc24.h"
+ #include "revolution/nwc24/NWC24Internal.h"
+ #include "revolution/os.h"
+diff --git a/src/RVL_SDK/os/OSExec.c b/src/RVL_SDK/os/OSExec.c
+index a3f1305..cfab8a0 100644
+--- a/src/RVL_SDK/os/OSExec.c
++++ b/src/RVL_SDK/os/OSExec.c
+@@ -3,7 +3,7 @@
+ #include "revolution/dvd.h"
+ #include "revolution/os.h"
+ #include "revolution/os/OSExecParams.h"
+-#include "revolution/os/OSTIme.h"
++#include "revolution/os/OSTime.h"
+ #include "revolution/types.h"
+ #include <wstring.h>
+ 
+diff --git a/src/RVL_SDK/wud/WUD.c b/src/RVL_SDK/wud/WUD.c
+index bbf35bd..fa2ffb9 100644
+--- a/src/RVL_SDK/wud/WUD.c
++++ b/src/RVL_SDK/wud/WUD.c
+@@ -1,4 +1,4 @@
+-#include "revolution/OS.h"
++#include "revolution/os.h"
+ #include "revolution/wud/WUDInternal.h"
+ 
+ #include <cstddef>

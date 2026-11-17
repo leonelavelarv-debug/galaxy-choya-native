@@ -1,0 +1,50 @@
+diff --git a/src/Game/Effect/AutoEffectInfo.cpp b/src/Game/Effect/AutoEffectInfo.cpp
+index b28f23b..6d72f7e 100644
+--- a/src/Game/Effect/AutoEffectInfo.cpp
++++ b/src/Game/Effect/AutoEffectInfo.cpp
+@@ -6,7 +6,11 @@ void AutoEffectInfo_FORCE_MATCH_SDATA2() {
+     (void)1.0f;
+ }
+ 
++#if defined(__linux__)
++#include <cstdlib>  // glibc declares strtoul (unsigned long); the Wii declaration below would clash (galaxy-choya-native)
++#else
+ extern "C" u32 strtoul(const char*, char**, int);
++#endif
+ 
+ namespace {
+     u32 str2Color(const char* pStr) NO_INLINE {
+diff --git a/src/Game/System/BCSVInclude_native.S b/src/Game/System/BCSVInclude_native.S
+index eb343cb..f6ab07a 100644
+--- a/src/Game/System/BCSVInclude_native.S
++++ b/src/Game/System/BCSVInclude_native.S
+@@ -3,14 +3,25 @@
+ // directory (-I <repo>) so the .incbin paths resolve. Tables stay big-endian; JMapInfo
+ // decodes them on read.
+ 
++#if defined(__APPLE__)
++#define BCSV_SYM(name) _##name
+     .section __TEXT,__const
++#else
++// ELF (Linux, galaxy-choya-native): read-only data, C symbol names without Mach-O's leading underscore.
++#define BCSV_SYM(name) name
++    .section .rodata
++#endif
+ 
+-    .globl _StoryEventBCSV
++    .globl BCSV_SYM(StoryEventBCSV)
+     .p2align 5
+-_StoryEventBCSV:
++BCSV_SYM(StoryEventBCSV):
+     .incbin "src/Game/System/StoryEvent.bcsv"
+ 
+-    .globl _GalaxyIDBCSV
++    .globl BCSV_SYM(GalaxyIDBCSV)
+     .p2align 5
+-_GalaxyIDBCSV:
++BCSV_SYM(GalaxyIDBCSV):
+     .incbin "src/Game/System/GalaxyID.bcsv"
++
++#if defined(__linux__)
++    .section .note.GNU-stack,"",%progbits
++#endif
