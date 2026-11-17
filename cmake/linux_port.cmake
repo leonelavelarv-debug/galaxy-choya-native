@@ -214,11 +214,12 @@ function(galaxy_add_choya_bridge)
     target_include_directories(aurora_core PRIVATE "${_bridge}")
     get_target_property(_sources aurora_gx SOURCES)
     list(APPEND _sources "${_bridge}/galaxy_choya_bridge.cpp" "${_bridge}/galaxy_choya_host.cpp"
+         "${_bridge}/galaxy_scene_renderer.cpp" "${GALAXY_ROOT}/direct/src/renderer_select.cpp"
          "${_choya}/choya_gx_core.cpp")
     set_property(TARGET aurora_gx PROPERTY SOURCES "${_sources}")
     set_source_files_properties("${_bridge}/galaxy_choya_bridge.cpp" "${_bridge}/galaxy_choya_host.cpp"
                                 TARGET_DIRECTORY aurora_gx PROPERTIES COMPILE_OPTIONS "-iquote${_aurora_dir}/lib")
-    target_include_directories(aurora_gx PRIVATE "${_bridge}" "${_choya}")
+    target_include_directories(aurora_gx PRIVATE "${_bridge}" "${_choya}" "${GALAXY_ROOT}/direct/include")
     target_link_libraries(aurora_gx PRIVATE dl)
     # Prueba de extremo a extremo: GX real → Aurora (backend nulo) → puente → núcleo en Mesa.
     add_executable(galaxy_bridge_gx_test EXCLUDE_FROM_ALL "${GALAXY_ROOT}/tests/bridge_gx_test.cpp")
