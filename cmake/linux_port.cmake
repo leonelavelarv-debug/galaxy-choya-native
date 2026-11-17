@@ -128,7 +128,7 @@ cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL galaxy_add_direct_j3d)
 # El paquete precompilado de Dawn (solo referencia en la PC, AURORA_DAWN_PROVIDER=package) está compilado con
 # libstdc++. Su API es C (webgpu.h), así que convive con la libc++ del port: se añade libstdc++ al final de la línea de
 # enlace solo en la compilación de la PC con Aurora. En la consola no hay Dawn (docs/BLOQUEOS.md, B2).
-if(PETARI_BUILD_GX_PROBE AND NOT CMAKE_CROSSCOMPILING)
+if(PETARI_BUILD_GX_PROBE AND NOT CMAKE_CROSSCOMPILING AND NOT GALAXY_WEBGPU_NULO)
     # Ruta completa (con -stdlib=libc++ clang no busca en la carpeta de GCC). Compartida, no estática: la estática
     # duplica los símbolos de libsupc++ que ya da la libc++abi del port.
     execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -stdlib=libstdc++ -print-file-name=libstdc++.so
@@ -142,6 +142,17 @@ endif()
 # --- Puente Aurora única → motor GLES de Choya (choya_bridge/). Se aplica sobre las fuentes de Aurora tal como las
 # dejan los parches de MacioGalaxy (la última versión de cada archivo en aurora_gx), y añade el puente y el núcleo de
 # Choya al mismo objetivo. Solo actúa con la fase 1 (PETARI_BUILD_GX_PROBE=ON). Cada gancho es obligatorio.
+# WebGPU nulo de Choya en lugar de Dawn (consola: obligatorio; PC: para probarlo). Las cabeceras son las de la versión
+# de Dawn que fija Aurora 08122911, extraídas por scripts/fetch_deps.py (third_party/dawn-headers, hash en lock.json).
+option(GALAXY_WEBGPU_NULO "WebGPU nulo de Choya en vez de Dawn" OFF)
+set(GALAXY_DAWN_HEADERS "${GALAXY_ROOT}/third_party/dawn-headers/include" CACHE PATH "Cabeceras de Dawn fijadas")
+if(GALAXY_WEBGPU_NULO)
+    if(NOT EXISTS "${GALAXY_DAWN_HEADERS}/dawn/webgpu.h")
+        message(FATAL_ERROR "galaxy-choya-native: faltan ${GALAXY_DAWN_HEADERS} (python3 scripts/fetch_deps.py --dawn-headers)")
+    endif()
+    set(Dawn_DIR "${GALAXY_ROOT}/nulo/cmake" CACHE PATH "" FORCE)
+endif()
+
 option(GALAXY_CHOYA_BRIDGE "Puente de Aurora hacia el motor GLES de Choya (se activa en ejecución con CHOYA_GLES=1)" ON)
 function(galaxy_add_choya_bridge)
     if(NOT GALAXY_CHOYA_BRIDGE OR NOT TARGET aurora_gx)

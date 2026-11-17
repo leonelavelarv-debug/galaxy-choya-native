@@ -86,5 +86,17 @@
         "fetchcontent": "ZSTD"
       }
     }
+  },
+  "dawn_headers": {
+    "version": "v20260807.225922",
+    "nota": "Solo las cabeceras (WebGPU nulo de Choya para la consola: no se enlaza Dawn). Mismas en ambos paquetes.",
+    "urls": {
+      "aarch64": "https://github.com/encounter/dawn/releases/download/v20260807.225922/dawn-linux-aarch64.tar.gz",
+      "x86_64": "https://github.com/encounter/dawn/releases/download/v20260807.225922/dawn-linux-x86_64.tar.gz"
+    },
+    "sha256": {
+      "aarch64": "PENDIENTE: sin red aquí; se fija la primera vez que se descarga (ver docs/BLOQUEOS.md B2)"
+    },
+    "tree_sha256": "d8cb6da14b1faebbf363d3c35fbf90e6301452a9046d3d6aa731cb4ca9d4c6e2"
   }
 }

@@ -27,6 +27,14 @@ set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 set(PKG_CONFIG_LIBDIR "/usr/lib/${_triple}/pkgconfig:/usr/share/pkgconfig")
+# pkg-config lee el entorno, no variables de CMake: sin esto encontraría las .pc de x86-64 del contenedor.
+set(ENV{PKG_CONFIG_LIBDIR} "/usr/lib/${_triple}/pkgconfig:/usr/share/pkgconfig")
+set(ENV{PKG_CONFIG_PATH} "")
+# Bibliotecas multiarch de Debian (dpkg --add-architecture arm64) y nunca las de x86-64 del propio contenedor.
+set(CMAKE_LIBRARY_ARCHITECTURE ${_triple})
+set(CMAKE_IGNORE_PATH /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/include/x86_64-linux-gnu)
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-fuse-ld=lld")
+set(CMAKE_SHARED_LINKER_FLAGS_INIT "-fuse-ld=lld")
 
 # Enlazador de LLVM (lld) y código para Cortex-A53. -O2 por omisión (Release lo pone CMake); LTO/PGO aparte.
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-fuse-ld=lld")

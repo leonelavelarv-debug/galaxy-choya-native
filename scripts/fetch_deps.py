@@ -121,11 +121,89 @@ def preparar_trabajo(nombre: str, src: str, commit: str, verify: bool) -> dict:
     return estado
 
 
+def arbol_real(nombre: str, src: str, commit: str) -> None:
+    """--verify: el contenido de work/<nombre> (incluidos cambios sin commit y archivos nuevos) debe ser exactamente el
+    commit fijado más los parches de patches/<nombre> en orden. Se compara el árbol git de ambos, con índices
+    temporales: no se toca el índice ni los archivos de la copia de trabajo."""
+    import tempfile
+    dst = os.path.join(WORK, nombre)
+    with tempfile.TemporaryDirectory() as tmp:
+        env_real = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "real"))
+        env_esp = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "esperado"))
+        def run(args, cwd, env):
+            r = subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise Fallo(f"{nombre}: git {' '.join(args)}: {r.stderr.strip()}")
+            return r.stdout.strip()
+        run(["read-tree", "HEAD"], dst, env_real)
+        run(["add", "-A", "."], dst, env_real)
+        real = run(["write-tree"], dst, env_real)
+        run(["read-tree", commit], dst, env_esp)
+        for parche in parches_de(nombre):
+            run(["apply", "--cached", "--whitespace=nowarn", parche], dst, env_esp)
+        esperado = run(["write-tree"], dst, env_esp)
+        if real != esperado:
+            difs = run(["diff-tree", "-r", "--name-only", esperado, real], dst, env_real).splitlines()
+            raise Fallo(f"{nombre}: work/{nombre} no es el commit fijado + sus parches ({len(difs)} archivo(s) "
+                        f"distintos, p. ej. {', '.join(difs[:5])}). Rehazla: rm -rf work/{nombre} && "
+                        f"git -C third_party/{nombre} worktree prune && python3 scripts/fetch_deps.py")
+
+
+def arbol_sha(raiz: str) -> str:
+    """sha256 de un árbol de archivos (rutas relativas ordenadas + sha256 de cada archivo)."""
+    import hashlib
+    h = hashlib.sha256()
+    for base, dirs, files in os.walk(raiz):
+        dirs.sort()
+        for n in sorted(files):
+            ruta = os.path.join(base, n)
+            h.update(os.path.relpath(ruta, raiz).encode() + b"\0" + _sha(ruta).encode() + b"\n")
+    return h.hexdigest()
+
+
+def cabeceras_dawn(d: dict, verify: bool, paquete: str | None) -> str:
+    """Cabeceras de la versión de Dawn que fija Aurora (para el WebGPU nulo de Choya; no se usa Dawn). Se extraen del
+    paquete precompilado fijado (cualquier arquitectura: las cabeceras son iguales) y se comprueba su hash."""
+    import tarfile
+    destino = os.path.join(THIRD, "dawn-headers")
+    inc = os.path.join(destino, "include")
+    if not os.path.isdir(inc):
+        if verify:
+            raise Fallo("dawn-headers: falta third_party/dawn-headers (python3 scripts/fetch_deps.py --dawn-headers)")
+        os.makedirs(destino, exist_ok=True)
+        if paquete and os.path.isdir(os.path.join(paquete, "include")):
+            import shutil
+            shutil.copytree(os.path.join(paquete, "include"), inc)
+        else:
+            import urllib.request
+            arch = d["urls"]["aarch64"]
+            tgz = os.path.join(destino, "dawn.tar.gz")
+            print(f"[deps] dawn-headers: descargando {arch}")
+            urllib.request.urlretrieve(arch, tgz)
+            if _sha(tgz) != d["sha256"]["aarch64"]:
+                raise Fallo(f"dawn-headers: {tgz} no coincide con el sha256 del lock")
+            with tarfile.open(tgz) as t:
+                miembros = [m for m in t.getmembers() if "/include/" in "/" + m.name and m.isfile()]
+                for m in miembros:
+                    rel = m.name.split("include/", 1)[1]
+                    os.makedirs(os.path.dirname(os.path.join(inc, rel)), exist_ok=True)
+                    with t.extractfile(m) as fsrc, open(os.path.join(inc, rel), "wb") as fdst:
+                        fdst.write(fsrc.read())
+            os.remove(tgz)
+    sha = arbol_sha(inc)
+    if sha != d["tree_sha256"]:
+        raise Fallo(f"dawn-headers: el árbol de cabeceras ({sha}) no es el del lock ({d['tree_sha256']})")
+    return sha
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--aurora-extern", action="store_true", help="clonar también las dependencias de Aurora")
+    ap.add_argument("--dawn-headers", action="store_true",
+                    help="extraer las cabeceras de Dawn fijadas (WebGPU nulo para la consola)")
+    ap.add_argument("--dawn-package-dir", help="paquete de Dawn ya extraído (sin red); si no, se descarga el fijado")
     a = ap.parse_args()
     with open(LOCK) as f:
         lock = json.load(f)["dependencias"]
@@ -142,6 +220,9 @@ def main() -> int:
                 continue
             resumen[nombre] = {"commit": d["commit"], "parches": preparar_trabajo(nombre, src, d["commit"], a.verify),
                                "ruta": os.path.relpath(os.path.join(WORK, nombre), ROOT)}
+            if a.verify:
+                arbol_real(nombre, src, d["commit"])  # contenido real, no solo el registro de aplicación
+                resumen[nombre]["arbol"] = "verificado"
             n = len(resumen[nombre]["parches"])
             print(f"[deps] {nombre}: {d['commit'][:12]} OK, {n} parche(s)")
     except Fallo as e:
@@ -172,6 +253,14 @@ def main() -> int:
     except Fallo as e:
         print(f"[deps] ERROR: {e}", file=sys.stderr)
         return 1
+    dh = json.load(open(LOCK)).get("dawn_headers")
+    if dh and (a.dawn_headers or os.path.isdir(os.path.join(THIRD, "dawn-headers"))):
+        try:
+            resumen["dawn_headers"] = cabeceras_dawn(dh, a.verify, a.dawn_package_dir)
+            print(f"[deps] dawn-headers: {dh['version']} OK")
+        except Fallo as e:
+            print(f"[deps] ERROR: {e}", file=sys.stderr)
+            return 1
     os.makedirs(WORK, exist_ok=True)
     with open(os.path.join(WORK, "patches-status.json"), "w") as f:
         json.dump(resumen, f, indent=1, ensure_ascii=False)

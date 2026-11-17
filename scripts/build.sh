@@ -1,19 +1,31 @@
 #!/bin/sh
 # Compila el port. Uso:
-#   scripts/build.sh host      # PC Linux x86-64 (pruebas; libc++ propia en out/libcxx-host)
-#   scripts/build.sh aarch64   # consola; dentro del contenedor de docker/Dockerfile.aarch64 (sysroot Debian 12)
-# Variables: JOBS, BUILD_TYPE (Release), GALAXY_GX=ON para Aurora/GX (fase 1, ver docs/BLOQUEOS.md).
+#   scripts/build.sh host [libs]   # PC x86-64: bibliotecas y pruebas (libc++ propia en out/libcxx-host)
+#   scripts/build.sh host app      # PC: ejecutable completo (Dawn de referencia; GALAXY_WEBGPU_NULO=ON para el nulo)
+#   scripts/build.sh aarch64 app   # consola: ejecutable distribuible (WebGPU nulo, sin Dawn) + comprobación ELF
+#   scripts/build.sh aarch64 libs  # consola: bibliotecas y pruebas (para correrlas en la consola)
+# aarch64 se compila dentro del contenedor de docker/Dockerfile.aarch64 (Debian 12, glibc 2.36).
+# Variables: JOBS, BUILD_TYPE (Release), GALAXY_GX=ON (libs con Aurora/GX), GALAXY_WEBGPU_NULO, GALAXY_GLIBC_MAX.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TARGET=${1:-host}
+MODE=${2:-libs}
 JOBS=${JOBS:-$(nproc)}
 BUILD_TYPE=${BUILD_TYPE:-Release}
-GALAXY_GX=${GALAXY_GX:-OFF}
-if [ "$GALAXY_GX" = ON ]; then
-  python3 "$ROOT/scripts/fetch_deps.py" --aurora-extern
-else
-  python3 "$ROOT/scripts/fetch_deps.py"
+case "$MODE" in
+  libs) GALAXY_GX=${GALAXY_GX:-OFF} ;;
+  app) GALAXY_GX=ON ;;  # el ejecutable siempre lleva Aurora, el puente y el host de pantalla
+  *) echo "modo desconocido: $MODE (libs | app)" >&2; exit 2 ;;
+esac
+if [ "$TARGET" = aarch64 ] && [ "$MODE" = app ]; then
+  GALAXY_WEBGPU_NULO=ON  # en la consola no hay Dawn: obligatorio
 fi
+GALAXY_WEBGPU_NULO=${GALAXY_WEBGPU_NULO:-OFF}
+FETCH="--aurora-extern"
+[ "$GALAXY_GX" = ON ] || FETCH=""
+[ "$GALAXY_WEBGPU_NULO" = ON ] && FETCH="$FETCH --dawn-headers"
+# shellcheck disable=SC2086
+python3 "$ROOT/scripts/fetch_deps.py" $FETCH
 
 case "$TARGET" in
   host)
@@ -49,6 +61,28 @@ if [ "$GALAXY_GX" = ON ]; then
       -DSDL_X11_XFIXES=OFF -DSDL_X11_XINPUT=OFF -DSDL_X11_XRANDR=OFF -DSDL_X11_XSCRNSAVER=OFF -DSDL_X11_XSHAPE=OFF \
       -DSDL_X11_XSYNC=OFF -DSDL_X11_XTEST=OFF -DGALAXY_CHOYA_BRIDGE=ON"
   fi
+  GX_ARGS="$GX_ARGS -DGALAXY_WEBGPU_NULO=$GALAXY_WEBGPU_NULO"
+fi
+
+if [ "$MODE" = app ]; then
+  # Distribuible: solo el ejecutable y lo que necesita (sin pruebas), en su propia carpeta.
+  # shellcheck disable=SC2086
+  cmake -S "$ROOT/work/MacioGalaxy" -B "$B/app" -G Ninja $TOOLCHAIN_ARGS $GX_ARGS \
+    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DBUILD_TESTING=OFF \
+    -DCMAKE_PROJECT_PetariNative_INCLUDE="$ROOT/cmake/linux_port.cmake" \
+    -DGALAXY_LIBCXX_ROOT="$LIBCXX"
+  cmake --build "$B/app" -j "$JOBS" --target petari
+  BIN="$B/app/native/app/Petari"
+  [ -x "$BIN" ] || { echo "no se generó $BIN" >&2; exit 1; }
+  if [ "$TARGET" = aarch64 ]; then
+    # Las de --allow van en libs.aarch64/ del port (package_portmaster.py --libs), copiadas del sysroot arm64.
+    python3 "$ROOT/scripts/check_elf.py" --arch aarch64 --glibc-max "${GALAXY_GLIBC_MAX:-2.36}" \
+      --allow "${GALAXY_ELF_ALLOW:-libsqlite3.so.0,libpng16.so.16,libfreetype.so.6,libz.so.1}" "$BIN"
+  else
+    python3 "$ROOT/scripts/check_elf.py" --arch x86_64 --glibc-max "${GALAXY_GLIBC_MAX:-2.39}" "$BIN"
+  fi
+  echo "ejecutable: $BIN"
+  exit 0
 fi
 # shellcheck disable=SC2086
 cmake -S "$ROOT/work/MacioGalaxy" -B "$B/macio" -G Ninja $TOOLCHAIN_ARGS $GX_ARGS \

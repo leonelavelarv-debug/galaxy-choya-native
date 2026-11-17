@@ -1,0 +1,18 @@
+diff --git a/native/gx/CMakeLists.txt b/native/gx/CMakeLists.txt
+index 1c45fbd..4c912ea 100644
+--- a/native/gx/CMakeLists.txt
++++ b/native/gx/CMakeLists.txt
+@@ -7,7 +7,12 @@ set(AURORA_ENABLE_CARD OFF CACHE BOOL "" FORCE)
+ set(AURORA_ENABLE_THP ON CACHE BOOL "" FORCE)
+ set(AURORA_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+ set(AURORA_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+-set(AURORA_DAWN_PROVIDER package CACHE STRING "" FORCE)
++if(GALAXY_WEBGPU_NULO)
++    # galaxy-choya-native: WebGPU nulo de Choya (nulo/cmake/DawnConfig.cmake) en lugar del Dawn precompilado de PC.
++    set(AURORA_DAWN_PROVIDER system CACHE STRING "" FORCE)
++else()
++    set(AURORA_DAWN_PROVIDER package CACHE STRING "" FORCE)
++endif()
+ FetchContent_Declare(aurora
+     GIT_REPOSITORY https://github.com/encounter/aurora.git
+     GIT_TAG 08122911e8621acb7ded6563813b264bec1494b5)
