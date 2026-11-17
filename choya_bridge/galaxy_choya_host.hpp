@@ -45,9 +45,12 @@ struct Stats {
   uint64_t readbacks = 0;       // lecturas del EFB servidas
   uint64_t presentFailures = 0;
   int width = 0, height = 0;
-  // Muestra de la imagen presentada (GALAXY_PRESENT_PROBE=x,y, y desde arriba): RGBA del último cuadro dibujado,
-  // leída en el hilo de pantalla justo antes de presentarlo. Para pruebas de integración.
-  uint8_t probe[4] = {0, 0, 0, 0};
+  // Muestras de la imagen presentada (GALAXY_PRESENT_PROBE=x,y[;x,y...], hasta 4, y desde arriba): RGBA del último
+  // cuadro dibujado, leídas en el hilo de pantalla justo antes de presentarlo. Para pruebas de integración.
+  static constexpr int kMaxProbes = 4;
+  uint8_t probe[4] = {0, 0, 0, 0};  // la primera
+  uint8_t probes[kMaxProbes][4] = {};
+  int probeCount = 0;
   bool probed = false;
   Mode mode = Mode::Sdl;
   bool contextReady = false;

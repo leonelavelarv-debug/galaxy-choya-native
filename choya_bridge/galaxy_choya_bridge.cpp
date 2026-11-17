@@ -446,9 +446,40 @@ void register_bind_group(uint64_t ref, const gx::ShaderInfo& info) noexcept {
   core::register_bind_group(ref, d);
 }
 
+namespace {
+thread_local const PackSource* tPackSource = nullptr;
+}
+
+PackScope::PackScope(const PackSource& src) noexcept : source_(src) { tPackSource = &source_; }
+PackScope::~PackScope() noexcept { tPackSource = nullptr; }
+
 void texture_data(const gfx::TextureRef& ref, const uint8_t* data, size_t size) noexcept {
   if (!enabled() || data == nullptr) return;
-  send_texture(reinterpret_cast<uintptr_t>(&ref), ref, data, size);
+  const auto id = reinterpret_cast<uintptr_t>(&ref);
+  if (const PackSource* src = tPackSource; src != nullptr && core::pack_is_open()) {
+    tPackSource = nullptr;  // una sola textura por alcance
+    const int64_t index = src->tlut != nullptr
+                              ? core::pack_lookup_palette(src->gxFormat, src->width, src->height, src->data, src->size,
+                                                          src->tlut, src->tlutBytes, src->tlutFormat)
+                              : core::pack_lookup(src->gxFormat, src->width, src->height, src->data, src->size);
+    if (index >= 0 && core::texture_from_pack(id, index)) {
+      ++gStats.packHits;
+      if (src->tlut != nullptr) ++gStats.packPaletteHits;
+      gStats.packBytesReplaced += size;
+      return;  // el núcleo sube la del paquete; la decodificada por Aurora no se manda
+    }
+    ++gStats.packMisses;  // sin sustitución válida: la original
+    if (std::getenv("GALAXY_BRIDGE_DEBUG")) {
+      const size_t need = core::gx_level_size(src->gxFormat, src->width, src->height);
+      log_line("paquete: sin entrada para fmt %u %ux%u (%zu bytes, nivel 0 %zu, clave sin paleta %016llx%s)",
+               src->gxFormat, src->width, src->height, src->size, need,
+               static_cast<unsigned long long>(
+                   need != 0 && src->size >= need ? core::texture_key(src->data, need, src->width, src->height, src->gxFormat)
+                                                  : 0),
+               src->tlut != nullptr ? ", con paleta" : "");
+    }
+  }
+  send_texture(id, ref, data, size);
 }
 
 std::shared_ptr<gfx::TextureRef> tracked(std::shared_ptr<gfx::TextureRef> handle) noexcept {

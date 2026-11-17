@@ -64,7 +64,30 @@ bool read_snapshot(uint64_t ticket, uint16_t x, uint16_t y, uint32_t& depth, uin
 void retire_snapshots(uint64_t throughTicket) noexcept;
 
 // Contadores desde el inicio (pruebas y log.txt).
+// assets.wlpk: origen GX de la textura que se va a crear (mientras dure el alcance, en este hilo). texture_data busca
+// esa identidad en el paquete: si está, el núcleo usa la versión del paquete (con sus mipmaps) y no se le manda la
+// decodificada; si no, se manda la de Aurora como siempre.
+struct PackSource {
+  uint32_t gxFormat, width, height;
+  const uint8_t* data;   // nivel 0 (y siguientes) tal como está en la memoria del juego
+  size_t size;
+  const uint8_t* tlut;   // paleta (C4/C8/C14X2) o nullptr
+  size_t tlutBytes;
+  uint32_t tlutFormat;
+};
+class PackScope {
+public:
+  explicit PackScope(const PackSource& src) noexcept;
+  ~PackScope() noexcept;
+  PackScope(const PackScope&) = delete;
+  PackScope& operator=(const PackScope&) = delete;
+
+private:
+  PackSource source_;  // copia: el llamador la arma en la misma expresión (temporal)
+};
+
 struct Stats {
+  uint64_t packHits = 0, packMisses = 0, packBytesReplaced = 0, packPaletteHits = 0;
   uint64_t segments = 0, readbacksRequested = 0, readbacksServed = 0, readbacksFailed = 0;
   uint64_t frames = 0, passes = 0, gxDraws = 0, clears = 0, copies = 0, displayCopies = 0, paletteConvs = 0;
   uint64_t generatedIndexDraws = 0, uniformBytes = 0;

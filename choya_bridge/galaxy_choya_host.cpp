@@ -87,7 +87,8 @@ struct State {
   void (*readPixels)(int, int, int, int, unsigned, unsigned, void*) = nullptr;
   void (*finish)() = nullptr;
   void (*bindFramebuffer)(unsigned, unsigned) = nullptr;
-  int probeX = -1, probeY = -1;
+  int probeXY[Stats::kMaxProbes][2] = {};
+  int probeCount = 0;
   Stats stats;
   std::mutex statsMutex;
 };
@@ -347,11 +348,16 @@ void render_thread(std::promise<bool>* ready) {
     // El núcleo dibuja todos los grupos en cola, en orden; devuelve true si el último se muestra.
     const bool drawn = choya::gx::draw_frame(w, h);
     bool presented = false;
-    uint8_t probe[4] = {0, 0, 0, 0};
-    const bool probing = drawn && s.probeX >= 0 && s.readPixels != nullptr && s.probeY < h;
+    uint8_t probes[Stats::kMaxProbes][4] = {};
+    const bool probing = drawn && s.probeCount > 0 && s.readPixels != nullptr;
     if (probing) {
       s.bindFramebuffer(0x8D40 /*GL_FRAMEBUFFER*/, 0);  // la imagen que se presenta, no el EFB
-      s.readPixels(s.probeX, h - 1 - s.probeY, 1, 1, 0x1908 /*GL_RGBA*/, 0x1401 /*GL_UNSIGNED_BYTE*/, probe);
+      for (int i = 0; i < s.probeCount; ++i) {
+        if (s.probeXY[i][1] < h) {
+          s.readPixels(s.probeXY[i][0], h - 1 - s.probeXY[i][1], 1, 1, 0x1908 /*GL_RGBA*/, 0x1401 /*GL_UNSIGNED_BYTE*/,
+                       probes[i]);
+        }
+      }
     }
     if (drawn) presented = present(s);
     // Lecturas del EFB después de presentar: leen las copias propias del lote del token (enlazan otros framebuffers).
@@ -364,7 +370,9 @@ void render_thread(std::promise<bool>* ready) {
       s.stats.height = h;
       if (drawn) ++s.stats.framesDrawn;
       if (probing) {
-        std::memcpy(s.stats.probe, probe, 4);
+        std::memcpy(s.stats.probes, probes, sizeof probes);
+        std::memcpy(s.stats.probe, probes[0], 4);
+        s.stats.probeCount = s.probeCount;
         s.stats.probed = true;
       }
       if (presented) ++s.stats.imagesPresented;
@@ -433,7 +441,19 @@ bool start(SDL_Window* window) noexcept {
     s.stats.width = pw;
     s.stats.height = ph;
   }
-  if (const char* pr = std::getenv("GALAXY_PRESENT_PROBE"); pr != nullptr) std::sscanf(pr, "%d,%d", &s.probeX, &s.probeY);
+  s.probeCount = 0;
+  if (const char* pr = std::getenv("GALAXY_PRESENT_PROBE"); pr != nullptr) {
+    for (const char* p = pr; p != nullptr && *p != '\0' && s.probeCount < Stats::kMaxProbes;) {
+      int x = -1, y = -1;
+      if (std::sscanf(p, "%d,%d", &x, &y) == 2 && x >= 0 && y >= 0) {
+        s.probeXY[s.probeCount][0] = x;
+        s.probeXY[s.probeCount][1] = y;
+        ++s.probeCount;
+      }
+      p = std::strchr(p, ';');
+      if (p != nullptr) ++p;
+    }
+  }
   log_line("modo de presentación: %s%s", mode_name(s.mode),
            std::getenv("GALAXY_PRESENT") == nullptr ? " (auto)" : "");
   choya::gx::set_wake(wake_from_core);

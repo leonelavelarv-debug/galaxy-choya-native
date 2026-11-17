@@ -158,7 +158,8 @@ function(galaxy_add_choya_bridge)
     # presentación sin superficie WebGPU cuando Choya presenta (gpu, aurora, window).
     foreach(_pair "aurora_gx:frame:lib/gfx/frame.cpp" "aurora_gx:recording:lib/gfx/recording.cpp"
             "aurora_gx:command_processor:lib/gx/command_processor.cpp" "aurora_gx:texture:lib/gfx/texture.cpp"
-            "aurora_gx:framebuffer:lib/dolphin/gx/GXFrameBuffer.cpp" "aurora_core:gpu:lib/webgpu/gpu.cpp"
+            "aurora_gx:framebuffer:lib/dolphin/gx/GXFrameBuffer.cpp" "aurora_gx:gxtexture:lib/gx/texture.cpp"
+            "aurora_core:gpu:lib/webgpu/gpu.cpp"
             "aurora_core:aurora:lib/aurora.cpp" "aurora_core:window:lib/window.cpp")
         string(REPLACE ":" ";" _pair "${_pair}")
         list(GET _pair 0 _tgt)
@@ -233,6 +234,14 @@ function(galaxy_add_choya_bridge)
     add_test(NAME galaxy_host_gx_pbuffer COMMAND galaxy_host_gx_test pbuffer)
     set_tests_properties(galaxy_host_gx_pbuffer PROPERTIES ENVIRONMENT "EGL_PLATFORM=surfaceless"
                          SKIP_RETURN_CODE 2 PASS_REGULAR_EXPRESSION "PRUEBA HOST OK")
+    # assets.wlpk por la ruta de la app: un paquete sintético con el formato del conversor de Choya.
+    add_executable(galaxy_pack_gx_test EXCLUDE_FROM_ALL "${GALAXY_ROOT}/tests/pack_gx_test.cpp")
+    target_compile_features(galaxy_pack_gx_test PRIVATE cxx_std_20)
+    target_include_directories(galaxy_pack_gx_test PRIVATE "${_bridge}" "${_choya}")
+    target_link_libraries(galaxy_pack_gx_test PRIVATE petari_platform_vi aurora::core aurora::gx aurora::vi petari_memory dl)
+    add_test(NAME galaxy_pack_gx COMMAND galaxy_pack_gx_test)
+    set_tests_properties(galaxy_pack_gx PROPERTIES ENVIRONMENT "EGL_PLATFORM=surfaceless"
+                         SKIP_RETURN_CODE 2 PASS_REGULAR_EXPRESSION "PRUEBA PAQUETE OK")
     # Aurora necesita una ventana SDL aunque use el backend nulo de Dawn: en PC sin pantalla se usa xvfb-run.
     find_program(GALAXY_XVFB_RUN xvfb-run)
     if(GALAXY_XVFB_RUN)

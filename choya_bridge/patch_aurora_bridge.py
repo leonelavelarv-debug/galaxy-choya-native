@@ -40,6 +40,33 @@ def frame(t: str) -> str:
         "petari_submit_segment: encodeSnapshot")
 
 
+def gxtexture(t: str) -> str:
+    # assets.wlpk: la identidad de la textura es la del dato GX original (nivel 0 y, con paleta, la TLUT y su formato).
+    # Se fija ANTES de crear la textura; texture_data (dentro de new_static_texture_2d) busca en el paquete.
+    t = replace_once(
+        t,
+        "      handle = gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), obj.format(),\n"
+        "                                          {static_cast<const uint8_t*>(obj.data), sourceBytes}, false, nameStr);\n",
+        "      ::galaxy_choya::PackScope galaxyPack{{obj.format(), obj.width(), obj.height(),\n"
+        "                                            static_cast<const uint8_t*>(obj.data), sourceBytes, nullptr, 0, 0}};\n"
+        "      handle = gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), obj.format(),\n"
+        "                                          {static_cast<const uint8_t*>(obj.data), sourceBytes}, false, nameStr);\n",
+        "resolve_static_texture: new_static_texture_2d")
+    return replace_once(
+        t,
+        "      handle = gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), GX_TF_RGBA8_PC,\n"
+        "                                          {converted.data.data(), converted.data.size()}, false,\n"
+        "                                          \"GX Static Palette Texture\");\n",
+        "      ::galaxy_choya::PackScope galaxyPack{{obj.format(), obj.width(), obj.height(),\n"
+        "                                            static_cast<const uint8_t*>(obj.data), textureBytes,\n"
+        "                                            static_cast<const uint8_t*>(tlut.data), tlutBytes,\n"
+        "                                            static_cast<uint32_t>(tlut.format)}};\n"
+        "      handle = gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), GX_TF_RGBA8_PC,\n"
+        "                                          {converted.data.data(), converted.data.size()}, false,\n"
+        "                                          \"GX Static Palette Texture\");\n",
+        "resolve_static_palette_texture: new_static_texture_2d")
+
+
 PRESENTS = ('extern "C" bool galaxy_choya_presents() __attribute__((weak));  // galaxy-choya-native\n'
             'static bool galaxy_choya_presents_now() { return galaxy_choya_presents != nullptr && galaxy_choya_presents(); }\n')
 
@@ -197,7 +224,7 @@ def framebuffer(t: str) -> str:
 
 
 KINDS = {"frame": frame, "recording": recording, "command_processor": command_processor, "texture": texture,
-         "framebuffer": framebuffer, "gpu": gpu, "aurora": aurora, "window": window}
+         "framebuffer": framebuffer, "gxtexture": gxtexture, "gpu": gpu, "aurora": aurora, "window": window}
 # Los de aurora_core no ven el puente (está en aurora_gx): solo declaraciones débiles, sin el .hpp.
 WEAK_ONLY = {"gpu": PRESENTS, "aurora": PRESENTS,
              "window": 'extern "C" uint64_t galaxy_choya_window_flags() __attribute__((weak));  // galaxy-choya-native\n'}
